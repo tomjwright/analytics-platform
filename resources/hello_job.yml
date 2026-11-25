@@ -4,8 +4,13 @@ resources:
   jobs:
     hello:
       name: hello
-      # TODO tasks: one task, key `hello`, that runs ../src/analytics_platform/hello.py
-      #   with the parameters ["--catalog", "${var.catalog}"].
-      #   Hint: Free Edition is serverless only, so use a spark_python_task with an
-      #   `environment_key`, and define that environment under `environments:`.
-      #   No cluster settings at all.
+      tasks:
+        - task_key: hello
+          environment_key: hello_env
+          spark_python_task:
+            python_file: ../src/analytics_platform/hello.py
+            parameters: ["--catalog", "${var.catalog}"]
+      environments:
+        - environment_key: hello_env
+          spec:
+            environment_version: "6"

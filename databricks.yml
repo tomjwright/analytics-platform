@@ -20,13 +20,20 @@ targets:
     variables:
       catalog: dev
 
-  # TODO staging:
-  #   - mode: production. Read what it changes compared with development mode
-  #     (hint: name prefixes, schedules, and which checks it enforces).
-  #   - workspace.root_path: a shared path such as /Workspace/Shared/.bundle/${bundle.name}/${bundle.target},
-  #     not your home folder, because the service principal deploys it.
-  #   - run_as: the staging service principal (its application ID), so the job
-  #     runs with the staging principal's grants, not yours.
-  #   - variables.catalog: staging
+  staging:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: acb14c44-9506-4f19-9375-e0b223869d04
+    variables:
+      catalog: staging
 
-  # TODO prod: the same shape as staging, with the prod principal and catalog.
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: a8ff1413-0ca6-426d-a62f-8c264d455332
+    variables:
+      catalog: prod

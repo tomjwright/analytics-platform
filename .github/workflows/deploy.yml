@@ -27,15 +27,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  staging:
-    runs-on: ubuntu-latest
-    # TODO environment: staging
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # TODO install the Databricks CLI
-      # TODO databricks bundle validate, deploy and run hello, all with --target staging
-      - run: echo "TODO deploy to staging"
-
-  # TODO prod: needs staging, environment prod, the same steps with --target prod.
+    staging:
+      runs-on: ubuntu-latest
+      environment: staging
+      env:
+        DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+        DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+        DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      steps:
+        - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          with:
+            persist-credentials: false
+        - uses: databricks/setup-cli@e1dad86b08f6ea07707aea128ec4bfa76af8db55 # v1.28.0
+        - run: databricks bundle validate --target staging
+        - run: databricks bundle deploy --target staging
+        - run: databricks bundle run hello --target staging
+    
+    prod:
+      runs-on: ubuntu-latest
+      environment: prod
+      env:
+        DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+        DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+        DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      needs: staging
+      steps:
+        - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          with:
+            persist-credentials: false
+        - uses: databricks/setup-cli@e1dad86b08f6ea07707aea128ec4bfa76af8db55 # v1.28.0
+        - run: databricks bundle validate --target prod
+        - run: databricks bundle deploy --target prod
+        - run: databricks bundle run hello --target prod

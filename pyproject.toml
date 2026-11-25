@@ -58,6 +58,8 @@ branch = true
 [tool.coverage.report]
 fail_under = 90
 show_missing = true
+# Script entry points are run by CI and Databricks, not imported by tests.
+exclude_also = ["if __name__ == .__main__.:"]
 
 [tool.mutmut]
 source_paths = ["src/analytics_platform/"]
