@@ -1,0 +1,65 @@
+[project]
+name = "analytics-platform"
+version = "0.1.0"
+description = "Customer analytics platform on Databricks Free Edition"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "actionlint-py>=1.7.12.25",
+    "dbt-databricks>=1.13.1",
+    "mutmut>=3.8.1",
+    "mypy>=2.4.1",
+    "pip-audit>=2.10.1",
+    "pip-licenses>=5.5.5",
+    "pytest",
+    "pytest-cov>=7.1.0",
+    "pyyaml",
+    # TODO(ticket 01): add the tools your gates need (ruff, mypy, pytest-cov, mutmut, pip-audit, a licence checker, sqlfluff, dbt-databricks).
+    "ruff>=0.17.6",
+    "sqlfluff>=4.5.0",
+    "sqlfluff-templater-dbt>=4.5.0",
+    "zizmor>=1.33.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# TODO(ticket 01): configure the gates here.
+# - [tool.ruff]: pick a rule set; start strict and relax only with a reason.
+# - [tool.mypy]: strict mode, pointed at src/.
+# - [tool.coverage.report]: a fail_under floor. What number, and why?
+# - [tool.mutmut]: which paths get mutated? Mutation testing tells you whether your tests would notice a bug.
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "PT", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+
+[tool.coverage.run]
+source = ["analytics_platform"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.mutmut]
+source_paths = ["src/analytics_platform/"]
+pytest_add_cli_args_test_selection = ["tests/"]
+pytest_add_cli_args = ["--ignore=tests/test_repo_gates.py"]

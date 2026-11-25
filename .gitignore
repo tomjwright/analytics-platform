@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+mutants/
+dbt/target/
+dbt/logs/
+dbt/dbt_packages/
+requirements.txt
