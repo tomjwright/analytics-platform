@@ -1,0 +1,41 @@
+name: deploy
+
+# Merging to main deploys to staging, runs the job, then waits for approval
+# before deploying the same commit to prod (ADR 0002).
+#
+# Hints:
+#   - The Databricks CLI reads DATABRICKS_HOST, DATABRICKS_CLIENT_ID and
+#     DATABRICKS_CLIENT_SECRET from the environment and logs in as the service
+#     principal. No `databricks configure` step, and never a personal token.
+#   - A job can only read an Environment's secrets once it declares
+#     `environment:`. That is also what triggers the prod approval.
+#   - Pass secrets through `env:`, never by pasting ${{ secrets.X }} into `run:`.
+#   - Install the CLI with databricks/setup-cli, pinned to a full commit SHA
+#     like the other actions.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Two merges in a row queue up instead of cancelling a half-finished deploy.
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    runs-on: ubuntu-latest
+    # TODO environment: staging
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # TODO install the Databricks CLI
+      # TODO databricks bundle validate, deploy and run hello, all with --target staging
+      - run: echo "TODO deploy to staging"
+
+  # TODO prod: needs staging, environment prod, the same steps with --target prod.

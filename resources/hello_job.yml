@@ -1,0 +1,11 @@
+# The hello-world job. Its only purpose in ticket 02 is to prove that CI can
+# deploy and run something in each environment as that environment's principal.
+resources:
+  jobs:
+    hello:
+      name: hello
+      # TODO tasks: one task, key `hello`, that runs ../src/analytics_platform/hello.py
+      #   with the parameters ["--catalog", "${var.catalog}"].
+      #   Hint: Free Edition is serverless only, so use a spark_python_task with an
+      #   `environment_key`, and define that environment under `environments:`.
+      #   No cluster settings at all.
