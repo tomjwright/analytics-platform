@@ -79,7 +79,7 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       - name: Audit the locked dependencies for known vulnerabilities
         run: |
-          uv export --format requirements-txt --no-emit-project > requirements.txt
+          uv export --locked --format requirements-txt --no-emit-project > requirements.txt
           uv run pip-audit -r requirements.txt --disable-pip
       # text-unidecode is GPL/Artistic and arrives through dbt. It is a dev-only tool that is never
       # shipped or distributed, so GPL's copyleft does not reach our code. Revisit if that changes.

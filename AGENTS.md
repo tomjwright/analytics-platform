@@ -32,7 +32,7 @@ uv run sqlfluff lint dbt
 uv run mypy
 uv run pytest --cov
 uv run mutmut run && uv run mutmut export-cicd-stats && uv run python scripts/check_mutation_score.py 85
-uv export --format requirements-txt --no-emit-project > requirements.txt && uv run pip-audit -r requirements.txt --disable-pip
+uv export --locked --format requirements-txt --no-emit-project > requirements.txt && uv run pip-audit -r requirements.txt --disable-pip
 uv run pip-licenses --partial-match --ignore-packages analytics-platform text-unidecode --allow-only="MIT;BSD;Apache;ISC;PSF;Python Software Foundation;MPL;Unlicense"
 uvx semgrep@1.187.0 scan --config p/python --config p/github-actions --error --metrics off
 uv run actionlint
