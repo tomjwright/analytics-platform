@@ -1,0 +1,19 @@
+# TODO(ticket 01): build the PR gate workflow. tests/test_repo_gates.py defines done.
+#
+# Hints, not answers:
+# - Trigger on pull_request. Set top-level `permissions: contents: read` and widen per job only where needed.
+# - Pin every action to a full commit SHA with the tag in a comment. Read zizmor's docs on why tags are unsafe.
+# - Never put ${{ github.event.pull_request.title }} straight into a `run:` line. Why is that an injection risk? Pass it via `env:`.
+# - Split jobs so a failure tells you which gate broke: naming, lint, types, test, mutation, deps, secrets, sast, workflows.
+# - gitleaks needs the full history (fetch-depth: 0) to scan every commit in the PR.
+# - CodeQL may live in its own workflow file; it only runs free while the repo is public.
+
+name: pr
+on:
+  pull_request:
+
+jobs:
+  todo:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "TODO(ticket 01)" && exit 1

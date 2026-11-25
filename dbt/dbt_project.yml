@@ -1,0 +1,9 @@
+name: analytics_platform
+version: "0.1.0"
+config-version: 2
+profile: analytics_platform
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+test-paths: ["tests"]
