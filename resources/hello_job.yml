@@ -1,0 +1,16 @@
+# The hello-world job. Its only purpose in ticket 02 is to prove that CI can
+# deploy and run something in each environment as that environment's principal.
+resources:
+  jobs:
+    hello:
+      name: hello
+      tasks:
+        - task_key: hello
+          environment_key: hello_env
+          spark_python_task:
+            python_file: ../src/analytics_platform/hello.py
+            parameters: ["--catalog", "${var.catalog}"]
+      environments:
+        - environment_key: hello_env
+          spec:
+            environment_version: "6"

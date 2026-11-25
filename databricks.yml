@@ -1,0 +1,39 @@
+# The bundle: everything Databricks needs (jobs, and later pipelines, alerts and
+# dashboards) defined as code, so no one clicks anything together in the UI.
+# Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/settings
+bundle:
+  name: analytics-platform
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: The Unity Catalog catalog this target writes to (ADR 0001).
+
+targets:
+  dev:
+    # `mode: development` prefixes every resource with your name and pauses
+    # schedules, so your experiments never collide with anyone else's.
+    mode: development
+    default: true
+    variables:
+      catalog: dev
+
+  staging:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: acb14c44-9506-4f19-9375-e0b223869d04
+    variables:
+      catalog: staging
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: a8ff1413-0ca6-426d-a62f-8c264d455332
+    variables:
+      catalog: prod
