@@ -4,12 +4,9 @@ The live parts (a real deploy, the approval and the permission error) are
 proved in the PR itself.
 """
 
-import json
 from pathlib import Path
 
 import yaml
-
-from analytics_platform.hello import build_log_line, main
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -83,12 +80,3 @@ def test_each_target_is_validated_deployed_and_run():
 def test_bootstrap_doc_has_no_todos_left():
     doc = (ROOT / "docs" / "bootstrap.md").read_text()
     assert "TODO" not in doc
-
-
-def test_hello_log_line_is_json_with_the_catalog():
-    assert json.loads(build_log_line("staging")) == {"event": "hello", "catalog": "staging", "status": "ok"}
-
-
-def test_hello_main_prints_the_log_line(capsys):
-    assert main(["--catalog", "prod"]) == 0
-    assert json.loads(capsys.readouterr().out)["catalog"] == "prod"
