@@ -5,7 +5,12 @@ from analytics_platform.naming import is_valid_branch_name, is_valid_pr_title, m
 
 @pytest.mark.parametrize(
     "name",
-    ["ci/2-repo-skeleton-gates", "feat/12-customer-dedup", "docs/branch-naming-convention", "perf/17-liquid-clustering"],
+    [
+        "ci/2-repo-skeleton-gates",
+        "feat/12-customer-dedup",
+        "docs/branch-naming-convention",
+        "perf/17-liquid-clustering",
+    ],
 )
 def test_valid_branch_names(name):
     assert is_valid_branch_name(name)

