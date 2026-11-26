@@ -72,4 +72,5 @@ pytest_add_cli_args = [
     "--ignore=tests/test_free_edition.py",
     "--ignore=tests/test_customer_tracer.py",
     "--ignore=tests/test_bronze.py",
+    "--ignore=tests/test_tracer_cicd.py",
 ]

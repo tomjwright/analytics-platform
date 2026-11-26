@@ -12,6 +12,10 @@ name: deploy
 #   - Pass secrets through `env:`, never by pasting ${{ secrets.X }} into `run:`.
 #   - Install the CLI with databricks/setup-cli, pinned to a full commit SHA
 #     like the other actions.
+#
+# Ticket 05: why does prod get the commit staging tested? Both jobs are in one workflow run, and
+# actions/checkout checks out that run's github.sha. Approving tomorrow still deploys today's commit,
+# even if main has moved on. (So never add `ref: main` to a checkout here.)
 
 on:
   push:
@@ -39,23 +43,43 @@ jobs:
           with:
             persist-credentials: false
         - uses: databricks/setup-cli@e1dad86b08f6ea07707aea128ec4bfa76af8db55 # v1.28.0
+        - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         - run: databricks bundle validate --target staging
         - run: databricks bundle deploy --target staging
+        # TODO(ticket 05): run the customer_tracer job instead of hello.
         - run: databricks bundle run hello --target staging
-    
+        - name: Publish the manifest for slim CI
+          # TODO(ticket 05): only after the job above succeeded (steps stop at the first failure, so order
+          # is enough), save this commit's manifest where slim CI looks for it:
+          # - `dbt parse --target staging` writes dbt/target/manifest.json without touching the warehouse.
+          #   Run it from dbt/ with DBT_PROFILES_DIR pointing at dbt/ (see tests/test_customer_tracer.py).
+          # - Copy it to dbfs:/Volumes/staging/ops/artifacts/manifest.json, replacing yesterday's (--overwrite).
+          run: echo "TODO(ticket 05)" && exit 1
+
     prod:
       runs-on: ubuntu-latest
       environment: prod
+      needs: staging
+      # TODO(ticket 05): the tag step creates a git ref. Which permission does this job need, and why
+      # here rather than at the top of the file?
       env:
         DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
         DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
         DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-      needs: staging
       steps:
         - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
           with:
             persist-credentials: false
         - uses: databricks/setup-cli@e1dad86b08f6ea07707aea128ec4bfa76af8db55 # v1.28.0
+        - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         - run: databricks bundle validate --target prod
         - run: databricks bundle deploy --target prod
+        # TODO(ticket 05): run the customer_tracer job instead of hello.
         - run: databricks bundle run hello --target prod
+        - name: Tag the prod release
+          # TODO(ticket 05): create the tag prod-<date>-<sha> on this commit.
+          # - The name: `uv run python -m analytics_platform.cicd tag "$GITHUB_SHA" "$(date -u +%F)"`.
+          # - Create it through the API, so no git credentials are stored on the runner:
+          #   `gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/<name>" -f sha="$GITHUB_SHA"`.
+          # - gh reads its token from GH_TOKEN: set it from github.token in this step's env.
+          run: echo "TODO(ticket 05)" && exit 1

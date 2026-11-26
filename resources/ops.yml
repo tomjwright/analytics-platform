@@ -1,0 +1,6 @@
+# Platform plumbing that isn't Customer data: build artifacts now, run logs and monitoring later.
+#
+# TODO(ticket 05): an `ops` schema with an `artifacts` volume in it. Copy the shape of `landing` and its
+# `files` volume in customer_tracer_job.yml (including ${var.schema_separator}, so dev gets dbt_<you>_ops).
+# Staging's deploy writes its dbt manifest to /Volumes/staging/ops/artifacts/manifest.json, and slim CI reads it.
+resources: {}

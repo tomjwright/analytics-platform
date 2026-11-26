@@ -7,6 +7,9 @@
     - staging and prod give just silver / gold: the custom schema on its own;
     - a model with no +schema (custom_schema_name is none) falls back to target.schema.
     Docs: https://docs.getdbt.com/docs/build/custom-schemas
+
+    TODO(ticket 05): the `ci` target builds like dev, in its own prefixed schemas:
+    ci_pr_<n>_silver, where target.schema is ci_pr_<n>.
 #}
 {% macro generate_schema_name(custom_schema_name, node) -%}
 

@@ -1,0 +1,36 @@
+name: pr-cleanup
+
+# When a PR closes (merged or not), drop the ci_pr_<n>_* schemas slim CI built for it in staging,
+# so abandoned PRs never leave tables behind.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  drop_pr_schemas:
+    # TODO(ticket 05): the same fork check as dbt_ci in pr.yml.
+    if: github.repository == 'TODO(ticket 05)'
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - uses: databricks/setup-cli@e1dad86b08f6ea07707aea128ec4bfa76af8db55 # v1.28.0
+      - name: Drop this PR's schemas
+        # TODO(ticket 05):
+        # - `databricks schemas list staging -o json` lists staging's schemas as JSON.
+        # - Pipe that into `uv run python -m analytics_platform.cicd drop-list "$PR_NUMBER"`.
+        # - Delete each name it prints: `databricks schemas delete "staging.<name>" --force`
+        #   (--force because the schemas still hold tables). Hint: `| while read -r name; do ...; done`.
+        run: echo "TODO(ticket 05)" && exit 1
