@@ -1,0 +1,48 @@
+models:
+  - name: stg_customers
+    description: One row per Customer (customer_unique_id), from the latest Bronze version.
+    columns:
+      - name: customer_unique_id
+        data_tests: [unique, not_null]
+      - name: zip_code_prefix
+        data_tests: [not_null]
+      - name: updated_at
+        data_tests: [not_null]
+
+unit_tests:
+  - name: stg_customers_keeps_the_latest_version_of_each_customer
+    model: stg_customers
+    given:
+      - input: source('bronze', 'customers')
+        rows:
+          - {customer_unique_id: u1, zip_code_prefix: "1001", city: "Sao Paulo ", state: sp, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+          - {customer_unique_id: u1, zip_code_prefix: "13015", city: campinas, state: SP, updated_at: "2017-01-05", _source_file: b.csv, _ingested_at: "2017-01-05 06:00:00"}
+          - {customer_unique_id: u2, zip_code_prefix: "40010", city: salvador, state: BA, updated_at: "2017-01-02", _source_file: a.csv, _ingested_at: "2017-01-02 06:00:00"}
+          - {customer_unique_id: u2, zip_code_prefix: "40020", city: salvador, state: BA, updated_at: "2017-01-02", _source_file: b.csv, _ingested_at: "2017-01-03 06:00:00"}
+    expect:
+      rows:
+        - {customer_unique_id: u1, zip_code_prefix: "13015", city: campinas, state: SP, updated_at: "2017-01-05"}
+        - {customer_unique_id: u2, zip_code_prefix: "40020", city: salvador, state: BA, updated_at: "2017-01-02"}
+
+  - name: stg_customers_standardises_text_and_zip
+    model: stg_customers
+    given:
+      - input: source('bronze', 'customers')
+        rows:
+          - {customer_unique_id: u1, zip_code_prefix: "1001", city: " Sao Paulo ", state: sp, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+    expect:
+      rows:
+        - {customer_unique_id: u1, zip_code_prefix: "01001", city: sao paulo, state: SP, updated_at: "2017-01-01"}
+
+  - name: stg_customers_drops_malformed_rows
+    model: stg_customers
+    given:
+      - input: source('bronze', 'customers')
+        rows:
+          - {customer_unique_id: "", zip_code_prefix: "40010", city: salvador, state: BA, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+          - {customer_unique_id: u2, zip_code_prefix: not-a-zip, city: salvador, state: BA, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+          - {customer_unique_id: u3, zip_code_prefix: "40010", city: salvador, state: BA, updated_at: not-a-date, _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+          - {customer_unique_id: u4, zip_code_prefix: "40010", city: salvador, state: BA, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+    expect:
+      rows:
+        - {customer_unique_id: u4}

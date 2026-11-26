@@ -8,3 +8,4 @@ dbt/logs/
 dbt/dbt_packages/
 requirements.txt
 data/
+dbt/.user.yml

@@ -1,10 +1,27 @@
+# One output per bundle target. On Databricks the dbt task sets DBT_HOST and
+# DBT_ACCESS_TOKEN itself; locally you export them (see the PR for the commands).
 analytics_platform:
   target: dev
   outputs:
     dev:
       type: databricks
-      host: "{{ env_var('DATABRICKS_HOST', 'placeholder.cloud.databricks.com') }}"
-      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', '/sql/1.0/warehouses/placeholder') }}"
-      token: "{{ env_var('DATABRICKS_TOKEN', 'placeholder') }}"
+      host: "{{ env_var('DBT_HOST', 'dbc-c2df7d53-3a0b.cloud.databricks.com') }}"
+      http_path: /sql/1.0/warehouses/63496ac182465c07
+      token: "{{ env_var('DBT_ACCESS_TOKEN', 'placeholder') }}"
       catalog: dev
-      schema: "dbt_{{ env_var('USER', 'dev') }}"
+      # dbt_<you>: the job passes --vars "{dev_user: ...}"; locally, export DBT_DEV_USER.
+      schema: "dbt_{{ var('dev_user', env_var('DBT_DEV_USER', 'dev')) }}"
+    staging:
+      type: databricks
+      host: "{{ env_var('DBT_HOST', 'dbc-c2df7d53-3a0b.cloud.databricks.com') }}"
+      http_path: /sql/1.0/warehouses/63496ac182465c07
+      token: "{{ env_var('DBT_ACCESS_TOKEN', 'placeholder') }}"
+      catalog: staging
+      schema: default
+    prod:
+      type: databricks
+      host: "{{ env_var('DBT_HOST', 'dbc-c2df7d53-3a0b.cloud.databricks.com') }}"
+      http_path: /sql/1.0/warehouses/63496ac182465c07
+      token: "{{ env_var('DBT_ACCESS_TOKEN', 'placeholder') }}"
+      catalog: prod
+      schema: default

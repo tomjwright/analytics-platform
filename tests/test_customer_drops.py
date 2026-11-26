@@ -143,7 +143,7 @@ def test_the_same_seed_gives_byte_identical_file_drops(customers, tmp_path):
 def test_a_drop_lands_under_its_ingest_date(customers, tmp_path):
     rows = generate(customers, DAY_1, 1, NO_CHAOS, seed=1)[DAY_1]
     path = write_drop(tmp_path, DAY_1, rows)
-    assert path == tmp_path / "customers" / "ingest_date=2017-01-01" / "customers.csv"
+    assert path == tmp_path / "customers" / "ingest_date=2017-01-01" / "customers_2017-01-01.csv"
     lines = path.read_text().splitlines()
     assert lines[0] == "customer_unique_id,zip_code_prefix,city,state,updated_at"
     assert lines[1] == "alice,1001,sao paulo,SP,2017-01-01"

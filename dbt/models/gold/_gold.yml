@@ -1,0 +1,8 @@
+models:
+  - name: dim_customer
+    description: Type 1 Customer dimension, one row per Customer (ticket 07 makes it SCD Type 2).
+    columns:
+      - name: customer_key
+        data_tests: [unique, not_null]
+      - name: customer_unique_id
+        data_tests: [unique, not_null]

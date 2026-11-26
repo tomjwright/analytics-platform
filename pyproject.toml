@@ -9,17 +9,18 @@ dependencies = []
 dev = [
     "actionlint-py>=1.7.12.25",
     "dbt-databricks>=1.13.1",
+    "delta-spark>=4.4.1",
     "mutmut>=3.8.1",
     "mypy>=2.4.1",
     "pip-audit>=2.10.1",
     "pip-licenses>=5.5.5",
+    "pyspark>=4.2.0",
     "pytest",
     "pytest-cov>=7.1.0",
     "pyyaml",
     # TODO(ticket 01): add the tools your gates need (ruff, mypy, pytest-cov, mutmut, pip-audit, a licence checker, sqlfluff, dbt-databricks).
     "ruff>=0.17.6",
     "sqlfluff>=4.5.0",
-    "sqlfluff-templater-dbt>=4.5.0",
     "zizmor>=1.33.1",
 ]
 
@@ -45,7 +46,7 @@ src = ["src", "tests"]
 select = ["E", "W", "F", "I", "B", "UP", "S", "SIM", "PT", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "S603", "S607"]  # tests run trusted CLIs (dbt) with fixed arguments
 
 [tool.mypy]
 strict = true
@@ -64,4 +65,11 @@ exclude_also = ["if __name__ == .__main__.:"]
 [tool.mutmut]
 source_paths = ["src/analytics_platform/"]
 pytest_add_cli_args_test_selection = ["tests/"]
-pytest_add_cli_args = ["--ignore=tests/test_repo_gates.py", "--ignore=tests/test_free_edition.py"]
+# Spark can't run inside mutmut's forked workers, so the Spark code and its tests stay out.
+do_not_mutate = ["src/analytics_platform/bronze.py"]
+pytest_add_cli_args = [
+    "--ignore=tests/test_repo_gates.py",
+    "--ignore=tests/test_free_edition.py",
+    "--ignore=tests/test_customer_tracer.py",
+    "--ignore=tests/test_bronze.py",
+]

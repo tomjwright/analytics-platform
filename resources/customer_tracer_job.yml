@@ -1,0 +1,81 @@
+# Ticket 04's tracer slice: File Drop -> Bronze -> stg_customers -> dim_customer.
+# The schemas and the volume are created by `bundle deploy`, so nothing is clicked in the UI.
+# In dev, the `name_prefix` preset in databricks.yml turns `landing` into `dbt_<you>_landing`.
+resources:
+  schemas:
+    landing:
+      catalog_name: ${var.catalog}
+      name: ${var.schema_separator}landing
+      comment: File Drops land here, in the `files` volume.
+    bronze:
+      catalog_name: ${var.catalog}
+      name: ${var.schema_separator}bronze
+      comment: Raw rows from every File Drop, plus ingest metadata.
+
+  volumes:
+    landing_files:
+      catalog_name: ${var.catalog}
+      schema_name: ${resources.schemas.landing.name}
+      name: files
+      volume_type: MANAGED
+
+  jobs:
+    customer_tracer:
+      name: customer_tracer
+      tasks:
+        - task_key: generate_customer_drop
+          environment_key: python_env
+          spark_python_task:
+            python_file: ../src/analytics_platform/customer_drops.py
+            parameters:
+              - --start
+              - "2017-01-01"
+              - --days
+              - "1"
+              - --out
+              - /Volumes/${var.catalog}/${resources.schemas.landing.name}/files
+              - --cache
+              - /Volumes/${var.catalog}/${resources.schemas.landing.name}/files/_olist
+
+        - task_key: bronze_customers
+          depends_on:
+            - task_key: generate_customer_drop
+          environment_key: python_env
+          spark_python_task:
+            python_file: ../src/analytics_platform/bronze.py
+            parameters:
+              - --catalog
+              - ${var.catalog}
+              - --landing-schema
+              - ${resources.schemas.landing.name}
+              - --bronze-schema
+              - ${resources.schemas.bronze.name}
+
+        # TODO(ticket 04): the dbt task.
+        # - It must run only after bronze_customers succeeds (depends_on).
+        # - dbt_task needs: project_directory (../dbt), profiles_directory (. : relative to the
+        #   project), warehouse_id (${var.warehouse_id}) and a list of commands.
+        # - One command: dbt build, with --target ${bundle.target}, so staging and prod pick their
+        #   own profile output. In dev, also pass --vars "{dev_user: ${workspace.current_user.short_name}}"
+        #   so your models land in dbt_<you>_silver and dbt_<you>_gold. (Why does prod not need it?)
+        # - environment_key: dbt_env
+        # Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/job-task-types#dbt-task
+        - task_key: dbt
+          depends_on:
+            - task_key: bronze_customers
+          dbt_task:
+            commands:
+              - 'dbt build --target ${bundle.target} --vars "{dev_user: ${workspace.current_user.short_name}}"'
+            project_directory: ../dbt
+            profiles_directory: .
+          environment_key: dbt_env
+              
+      environments:
+        - environment_key: python_env
+          spec:
+            environment_version: "6"
+        - environment_key: dbt_env
+          spec:
+            environment_version: "6"
+            dependencies:
+              - dbt-databricks>=1.13.1,<2.0.0
