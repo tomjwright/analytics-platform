@@ -5,11 +5,11 @@ resources:
   schemas:
     landing:
       catalog_name: ${var.catalog}
-      name: landing
+      name: ${var.schema_separator}landing
       comment: File Drops land here, in the `files` volume.
     bronze:
       catalog_name: ${var.catalog}
-      name: bronze
+      name: ${var.schema_separator}bronze
       comment: Raw rows from every File Drop, plus ingest metadata.
 
   volumes:
@@ -68,7 +68,6 @@ resources:
               - 'dbt build --target ${bundle.target} --vars "{dev_user: ${workspace.current_user.short_name}}"'
             project_directory: ../dbt
             profiles_directory: .
-            warehouse_id: ${var.warehouse_id}
           environment_key: dbt_env
               
       environments:
