@@ -50,7 +50,10 @@ def download(name: str, cache_dir: Path, base_url: str = OLIST_URL) -> Path:
     path = cache_dir / name
     if not path.exists():
         cache_dir.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(url, path)  # noqa: S310  # nosemgrep: dynamic-urllib-use-detected
+        # Download beside the target, then rename: an interrupted download never looks cached.
+        partial = path.with_name(f"{name}.part")
+        urllib.request.urlretrieve(url, partial)  # noqa: S310  # nosemgrep: dynamic-urllib-use-detected
+        partial.replace(path)
     return path
 
 
