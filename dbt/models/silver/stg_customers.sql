@@ -13,22 +13,23 @@ with cleaned as (
         trim(lower(city)) as city,
         trim(upper(state)) as state,
         try_to_date(updated_at) as updated_at,
-        try_to_date(_ingested_at) as _ingested_at,
+        _ingested_at,
         trim(_source_file) as _source_file
     from {{ source('bronze', 'customers') }}
 ),
 
 remove_errors as (
     select * from cleaned
-    where updated_at is not null
-      and nullif(customer_unique_id, '') is not null 
-      and try_cast(zip_code_prefix as integer) is not null
+    where
+        updated_at is not null
+        and nullif(customer_unique_id, '') is not null
+        and try_cast(zip_code_prefix as integer) is not null
 ),
 
 deduplicated as (
     select * from remove_errors
     qualify row_number() over (
-        partition by customer_unique_id 
+        partition by customer_unique_id
         order by updated_at desc, _ingested_at desc, _source_file desc
     ) = 1
 )

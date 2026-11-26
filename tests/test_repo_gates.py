@@ -71,10 +71,11 @@ def test_ruff_mypy_coverage_and_mutmut_are_configured():
     assert "mutmut" in tool
 
 
-def test_sqlfluff_uses_databricks_dialect_and_dbt_templater():
+def test_sqlfluff_uses_databricks_dialect_and_jinja_templater():
     config = (ROOT / ".sqlfluff").read_text()
     assert re.search(r"dialect\s*=\s*databricks", config)
-    assert re.search(r"templater\s*=\s*dbt", config)
+    assert re.search(r"templater\s*=\s*jinja", config)
+    assert re.search(r"apply_dbt_builtins\s*=\s*True", config)
 
 
 def test_agents_md_lists_the_checks():

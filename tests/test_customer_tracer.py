@@ -44,7 +44,9 @@ def test_tasks_run_generate_then_bronze_then_dbt():
 def test_dbt_task_builds_the_project_for_the_deployed_target():
     dbt_task = tracer_job()["dbt"]["dbt_task"]
     assert dbt_task["project_directory"] == "../dbt"
-    assert dbt_task["warehouse_id"] == "${var.warehouse_id}"
+    # Databricks only reads our profiles.yml when no warehouse_id is set on the task.
+    assert dbt_task["profiles_directory"] == "."
+    assert "warehouse_id" not in dbt_task
     build = [command for command in dbt_task["commands"] if command.startswith("dbt build")]
     assert len(build) == 1
     assert "--target ${bundle.target}" in build[0]

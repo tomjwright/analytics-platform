@@ -4,9 +4,15 @@ dialect = databricks
 # connection; the dbt templater opens one for every model, which CI doesn't have.
 templater = jinja
 max_line_length = 120
+# ST06 wants plain columns before calculations; dimensions put the surrogate key first.
+exclude_rules = ST06
 
 [sqlfluff:templater:jinja]
 apply_dbt_builtins = True
 
 [sqlfluff:rules:capitalisation.keywords]
 capitalisation_policy = lower
+
+# `state` is an Olist source column name, not a keyword misuse.
+[sqlfluff:rules:references.keywords]
+ignore_words = state
