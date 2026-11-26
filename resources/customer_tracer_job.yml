@@ -60,7 +60,17 @@ resources:
         #   so your models land in dbt_<you>_silver and dbt_<you>_gold. (Why does prod not need it?)
         # - environment_key: dbt_env
         # Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/job-task-types#dbt-task
-
+        - task_key: dbt
+          depends_on:
+            - task_key: bronze_customers
+          dbt_task:
+            commands:
+              - 'dbt build --target ${bundle.target} --vars "{dev_user: ${workspace.current_user.short_name}}"'
+            project_directory: ../dbt
+            profiles_directory: .
+            warehouse_id: ${var.warehouse_id}
+          environment_key: dbt_env
+              
       environments:
         - environment_key: python_env
           spec:

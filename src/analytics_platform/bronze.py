@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.functions import col, current_timestamp, regexp_extract, to_date
 from pyspark.sql.types import StringType, StructField, StructType
 
 # The File Drop's columns, all read as strings. Question for the interview log:
@@ -44,7 +45,13 @@ def bronze_paths(catalog: str, landing_schema: str, bronze_schema: str) -> Bronz
     # - The table lives in the Bronze schema of the same catalog.
     # - Checkpoint and schema location: one per table, per environment, and never inside
     #   the source folder (what would Auto Loader do with its own checkpoint files?).
-    raise NotImplementedError
+    volume = f"/Volumes/{catalog}/{landing_schema}/files"
+    return BronzePaths(
+        source=f"{volume}/customers",
+        table=f"{catalog}.{bronze_schema}.customers",
+        checkpoint=f"{volume}/_checkpoints/bronze_customers",
+        schema_location=f"{volume}/_schemas/bronze_customers",
+    )
 
 
 def read_drops(spark: SparkSession, source: str, schema_location: str, auto_loader: bool) -> DataFrame:
@@ -54,14 +61,33 @@ def read_drops(spark: SparkSession, source: str, schema_location: str, auto_load
     #   Auto Loader reads CSV columns as strings unless you ask it to infer types.
     # - auto_loader=False (local tests): format "csv" with .schema(CUSTOMER_SCHEMA), because a
     #   plain file stream can't infer a schema.
-    raise NotImplementedError
+
+    if auto_loader:
+        return (
+            spark.readStream.format("cloudFiles")
+            .option("cloudFiles.format", "csv")
+            .option("cloudFiles.schemaLocation", schema_location)
+            .option("cloudFiles.schemaEvolutionMode", "rescue")
+            .option("header", "true")
+            .load(source)
+        )
+    else:
+        return spark.readStream.format("csv").option("header", "true").schema(CUSTOMER_SCHEMA).load(source)
 
 
 def with_ingest_metadata(df: DataFrame) -> DataFrame:
     # TODO(ticket 04): add the METADATA_COLUMNS.
     # - Every file-based DataFrame has a hidden `_metadata` struct; `_metadata.file_path` is the file's path.
     # - _ingested_at: when this load ran. _file_drop_date: the date in `ingest_date=YYYY-MM-DD`, as a date.
-    raise NotImplementedError
+
+    return (
+        df.withColumn("_ingested_at", current_timestamp())
+        .withColumn(
+            "_file_drop_date",
+            to_date(regexp_extract(col("_metadata.file_path"), r"ingest_date=(\d{4}-\d{2}-\d{2})", 1), "yyyy-MM-dd"),
+        )
+        .withColumn("_source_file", col("_metadata.file_path"))
+    )
 
 
 def ingest(spark: SparkSession, paths: BronzePaths, auto_loader: bool = True) -> None:
@@ -69,7 +95,18 @@ def ingest(spark: SparkSession, paths: BronzePaths, auto_loader: bool = True) ->
     # - writeStream with a checkpointLocation, partitioned by _file_drop_date.
     # - trigger(availableNow=True): load every file not yet in the checkpoint, then stop.
     # - .toTable(...) starts the query; .awaitTermination() blocks until it finishes.
-    raise NotImplementedError
+
+    drops = read_drops(spark, paths.source, paths.schema_location, auto_loader)
+    drops_with_metadata = with_ingest_metadata(drops)
+
+    query = (
+        drops_with_metadata.writeStream.option("checkpointLocation", paths.checkpoint)
+        .partitionBy("_file_drop_date")
+        .trigger(availableNow=True)
+        .toTable(paths.table)
+    )
+
+    query.awaitTermination()
 
 
 def main(argv: list[str]) -> int:

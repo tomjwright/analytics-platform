@@ -70,7 +70,7 @@ def test_rows_carry_file_name_ingest_timestamp_and_file_drop_date(spark, paths):
     ingest(spark, paths, auto_loader=False)
     row = spark.table(paths.table).first()
     assert set(METADATA_COLUMNS) <= set(spark.table(paths.table).columns)
-    assert row["_source_file"].endswith("ingest_date=2017-01-01/customers.csv")
+    assert row["_source_file"].endswith("ingest_date=2017-01-01/customers_2017-01-01.csv")
     assert row["_ingested_at"] is not None
     assert row["_file_drop_date"] == DAY_1
 
