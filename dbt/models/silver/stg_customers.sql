@@ -9,11 +9,10 @@
 with cleaned as (
     select
         trim(customer_unique_id) as customer_unique_id,
-        CASE
-            WHEN trim(zip_code_prefix) RLIKE '^[0-9]{1,5}$'
-            THEN lpad(trim(zip_code_prefix), 5, '0')
-            ELSE NULL
-        END AS zip_code_prefix,
+        case
+            when trim(zip_code_prefix) rlike '^[0-9]{1,5}$'
+                then lpad(trim(zip_code_prefix), 5, '0')
+        end as zip_code_prefix,
         trim(lower(city)) as city,
         trim(upper(state)) as state,
         try_to_date(updated_at) as updated_at,
@@ -27,7 +26,7 @@ remove_errors as (
     where
         updated_at is not null
         and nullif(customer_unique_id, '') is not null
-        and try_cast(zip_code_prefix as integer) is not null
+        and zip_code_prefix is not null
 ),
 
 deduplicated as (
