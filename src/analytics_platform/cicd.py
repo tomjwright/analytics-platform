@@ -6,6 +6,9 @@ Usage (from the repo root):
     python -m analytics_platform.cicd tag <sha> <yyyy-mm-dd>     # prints prod-<date>-<short sha>
 """
 
+import json
+import os
+import subprocess
 import sys
 from datetime import date
 from pathlib import Path
@@ -14,47 +17,44 @@ DBT_DIR = Path(__file__).resolve().parents[2] / "dbt"
 
 
 def build_args(state_dir: Path) -> list[str]:
-    """dbt arguments for slim CI.
+    """dbt arguments for slim CI: only what changed (plus downstream) when staging's manifest exists.
 
-    TODO(ticket 05):
-    - If state_dir holds a manifest.json (staging's last deploy), build only what changed plus
-      everything downstream of it, and read unchanged parents from staging instead of rebuilding them.
-    - If it doesn't (the very first run), build everything: there is nothing to compare against.
-    - Always --target ci.
-    Docs: https://docs.getdbt.com/reference/node-selection/syntax#about-node-selection (state:, --defer)
+    With no manifest (the very first run) there is nothing to compare against, so build everything.
     """
-    raise NotImplementedError
+    args = ["build", "--target", "ci"]
+    if (state_dir / "manifest.json").exists():
+        args += ["--select", "state:modified+", "--defer", "--state", str(state_dir)]
+    return args
 
 
 def pr_schemas(schema_names: list[str], pr_number: int) -> list[str]:
-    """The schemas belonging to one PR, sorted, so closing PR 1 never drops PR 12's.
-
-    TODO(ticket 05): keep the names that start with this PR's prefix. Careful: what does
-    "ci_pr_1" match that it shouldn't?
-    """
-    raise NotImplementedError
+    """The schemas belonging to one PR, sorted. The trailing "_" stops PR 1 matching PR 12's."""
+    return sorted(name for name in schema_names if name.startswith(f"ci_pr_{pr_number}_"))
 
 
 def prod_tag(day: date, sha: str) -> str:
-    """The git tag for a prod deploy, e.g. prod-2026-11-26-3e59ab6 (7-character short SHA).
-
-    TODO(ticket 05)
-    """
-    raise NotImplementedError
+    """The git tag for a prod deploy, e.g. prod-2026-11-26-3e59ab6 (7-character short SHA)."""
+    return f"prod-{day}-{sha[:7]}"
 
 
 def main(argv: list[str]) -> int:
-    """Dispatch on argv[0]: build, drop-list or tag (see the module docstring).
-
-    TODO(ticket 05):
-    - build: run `dbt` with build_args(...) in DBT_DIR, with DBT_PROFILES_DIR set to DBT_DIR on top of
-      the current environment (subprocess.run, check=False). Return dbt's exit code.
-      Ruff's S603/S607 will flag the call. The arguments are fixed strings, not user input, so a
-      `# noqa: S603, S607` with that reason is the honest fix.
-    - drop-list: read the JSON list from stdin, print each of the PR's schema names on its own line.
-    - tag: print the tag. The workflow passes today's UTC date, so this function stays pure.
-    """
-    raise NotImplementedError
+    command, *rest = argv
+    if command == "build":
+        env = {**os.environ, "DBT_PROFILES_DIR": str(DBT_DIR)}
+        # Fixed arguments, not user input.
+        result = subprocess.run(["dbt", *build_args(Path(rest[0]))], cwd=DBT_DIR, env=env, check=False)  # noqa: S603, S607
+        return result.returncode
+    if command == "drop-list":
+        names = [row["name"] for row in json.load(sys.stdin)]
+        for name in pr_schemas(names, int(rest[0])):
+            print(name)
+        return 0
+    if command == "tag":
+        sha, day = rest
+        print(prod_tag(date.fromisoformat(day), sha))
+        return 0
+    print(f"unknown command: {command}", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

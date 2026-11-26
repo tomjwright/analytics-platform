@@ -70,3 +70,8 @@ def test_main_drop_list_prints_the_prs_schemas(monkeypatch, capsys):
 def test_main_tag_prints_the_tag(capsys):
     assert main(["tag", "3e59ab6c0ffee", "2026-11-26"]) == 0
     assert capsys.readouterr().out.strip() == "prod-2026-11-26-3e59ab6"
+
+
+def test_main_rejects_an_unknown_command(capsys):
+    assert main(["deploy"]) == 2
+    assert "unknown command: deploy" in capsys.readouterr().err
