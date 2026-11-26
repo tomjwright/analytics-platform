@@ -7,3 +7,12 @@ model-paths: ["models"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 test-paths: ["tests"]
+
+models:
+  analytics_platform:
+    silver:
+      +schema: silver
+      +materialized: table
+    gold:
+      +schema: gold
+      +materialized: table

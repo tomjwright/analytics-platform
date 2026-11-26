@@ -10,6 +10,9 @@ include:
 variables:
   catalog:
     description: The Unity Catalog catalog this target writes to (ADR 0001).
+  warehouse_id:
+    description: The SQL warehouse dbt runs on (Free Edition's Serverless Starter Warehouse). Not a secret.
+    default: 63496ac182465c07
 
 targets:
   dev:
@@ -17,6 +20,10 @@ targets:
     # schedules, so your experiments never collide with anyone else's.
     mode: development
     default: true
+    # Bundle-created schemas become dbt_<you>_landing and dbt_<you>_bronze, matching the
+    # dbt_<you>_silver and dbt_<you>_gold schemas dbt builds for you.
+    presets:
+      name_prefix: dbt_${workspace.current_user.short_name}_
     variables:
       catalog: dev
 

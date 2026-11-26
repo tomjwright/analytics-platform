@@ -1,0 +1,8 @@
+sources:
+  - name: bronze
+    description: Loaded by the bronze_customers job task (src/analytics_platform/bronze.py), not by dbt.
+    database: "{{ target.catalog }}"
+    schema: "{{ target.schema ~ '_bronze' if target.name == 'dev' else 'bronze' }}"
+    tables:
+      - name: customers
+        description: Every row of every Customer File Drop, as it arrived, plus ingest metadata.

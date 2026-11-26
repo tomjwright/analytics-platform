@@ -1,11 +1,12 @@
 [sqlfluff]
 dialect = databricks
-templater = dbt
+# The jinja templater with dbt's builtins (ref, source, var) lints without a warehouse
+# connection; the dbt templater opens one for every model, which CI doesn't have.
+templater = jinja
 max_line_length = 120
 
-[sqlfluff:templater:dbt]
-project_dir = dbt
-profiles_dir = dbt
+[sqlfluff:templater:jinja]
+apply_dbt_builtins = True
 
 [sqlfluff:rules:capitalisation.keywords]
 capitalisation_policy = lower
