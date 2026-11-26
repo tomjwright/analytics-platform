@@ -54,3 +54,144 @@ One entry per ticket, written before you close it.
 - **Why does the chaos have to be repeatable?** A data test that fails must fail the same way on the next run, or you can't tell a fix from luck. A seed turns random data into a fixed fixture.
 - **Why pin the download to a commit?** A branch can change under you; a commit cannot. Same idea as pinning actions to a SHA.
 - **What would you improve?** Validate that rates are between 0 and 1 and that `--days` is positive, add schema drift (a new or renamed column on some day), and checksum the downloaded files.
+
+## Ticket 04: Customer tracer slice, Bronze to dim_customer in dev
+
+Answers are written to be said out loud. "Measured" numbers come from the Databricks job, Delta history, SQL on the tables, or a local Spark benchmark. "Projected" numbers are arithmetic from those measurements and are labelled as such.
+
+### Reference sheet (the facts every answer draws on)
+
+| Fact | Value | Source |
+|---|---|---|
+| File Drop | `/Volumes/dev/dbt_thomasjwrightmain_landing/files/customers/ingest_date=2017-01-01/customers_2017-01-01.csv` | job run |
+| Bronze table | `dev.dbt_thomasjwrightmain_bronze.customers`, partitioned by `_file_drop_date` | `DESCRIBE DETAIL`: `partitionColumns: ["_file_drop_date"]` |
+| Checkpoint | `.../files/_checkpoints/bronze_customers/` with `offsets/0`, `commits/`, `sources/0/rocksdb` | `databricks fs ls` |
+| Raw rows | 331 rows, 326 distinct Customers, 0 empty IDs, 2 bad ZIPs, 0 bad dates, 0 rescued | SQL on Bronze |
+| Silver result | 329 valid rows, 324 Customers: 2 bad-ZIP rows and 5 duplicate copies removed | SQL on Bronze |
+| Gold result | 324 rows, 324 distinct `customer_key` | SQL on Gold |
+| Idempotency | 4 job runs on the same drop, 1 Bronze write (`STREAMING UPDATE`, `numOutputRows=331`) | `DESCRIBE HISTORY` |
+| Job runtime | run 708828557475645: 91 s (generate 16, Bronze 10, dbt 58); run 878137252751773: 101 s (13, 23, 57) | Jobs API |
+| Benchmark | 90 drops, 207,517 rows, Spark `local[2]`: full reload 5.3 to 9.5 s, new day 1.9 s, no-op rerun 1.7 s | local benchmark |
+| Tests | 7 Spark Bronze tests, 7 bundle and manifest tests, 3 dbt unit tests, 8 dbt data tests, mutation score 87.4% (floor 85%) | pytest, dbt, mutmut |
+
+### "Walk me through what you built."
+
+"It's the first vertical slice of a medallion pipeline on Databricks, from a raw CSV to a Gold dimension, deployed entirely from Git with a Databricks Asset Bundle. `databricks bundle deploy -t dev` creates two Unity Catalog schemas, a managed volume and a three-task job, all from `resources/customer_tracer_job.yml`.
+
+Task one, `generate_customer_drop`, writes one day of Olist Customers into the landing volume, at `customers/ingest_date=2017-01-01/customers_2017-01-01.csv`. The generator injects realistic faults: exact duplicate rows, and malformed rows with an empty ID, a ZIP of `not-a-zip`, or a date of `not-a-date`.
+
+Task two, `bronze_customers`, is a PySpark Auto Loader stream:
+
+```python
+spark.readStream.format("cloudFiles")
+    .option("cloudFiles.format", "csv")
+    .option("cloudFiles.schemaLocation", ".../_schemas/bronze_customers")
+    .option("cloudFiles.schemaEvolutionMode", "rescue")
+    .load(".../files/customers")
+# + _ingested_at = current_timestamp(), _source_file = _metadata.file_path,
+#   _file_drop_date = the date parsed out of ingest_date=YYYY-MM-DD in the path
+    .writeStream.option("checkpointLocation", ".../_checkpoints/bronze_customers")
+    .partitionBy("_file_drop_date")
+    .trigger(availableNow=True)
+    .toTable("dev.dbt_thomasjwrightmain_bronze.customers")
+```
+
+Task three runs `dbt build --target dev`. `stg_customers` trims, pads ZIPs to 5 digits, lower-cases city, upper-cases state, parses dates with `try_to_date`, drops rows it can't trust, and deduplicates with `qualify row_number()`. `dim_customer` is a Type 1 dimension keyed on `md5(customer_unique_id)`.
+
+On the first real drop, 331 raw rows became 324 Customers, and four runs on the same drop wrote Bronze exactly once."
+
+### "Why did you design it this way?"
+
+**Why `availableNow` streaming instead of `spark.read`?**
+"The checkpoint. A batch read has no memory, so every run rereads every file ever dropped, and a rerun appends the same rows again. Auto Loader records each file it has committed, in RocksDB under `sources/0` in the checkpoint. `availableNow` runs that like a batch job: it processes every unseen file, then stops, so the compute bill is per run, not 24/7.
+
+I measured it locally on 90 daily drops, 207,517 rows. A full batch reload took 5.3 to 9.5 seconds. The incremental load of one new day, 5,602 rows, took 1.9 seconds, so 2.9 to 5 times faster. A rerun with nothing new took 1.7 seconds and wrote 0 rows; that 1.7 seconds is fixed stream start-up and checkpoint reading, not data work. On Databricks, four runs on the same drop produced exactly one `STREAMING UPDATE` in Delta history. The ratio isn't fixed: full-reload cost is proportional to total history, and incremental cost to one day, so at 365 days the gap is roughly 365 to 1 in data read (projected)."
+
+**Why does Bronze keep strings, and use `rescue` mode?**
+"Bronze's job is to never lose or reject data. All 5 columns are strings, so `not-a-date` loads as text instead of failing the whole file. If the source adds a column or sends a value that doesn't fit, `rescue` mode puts it in `_rescued_data` instead of failing the stream. On this drop, `_rescued_data` was null for all 331 rows, and I checked that with SQL rather than assuming it. Typing happens in Silver with `try_cast` and `try_to_date`, which return null instead of throwing, so one bad value costs one row, not the run."
+
+**Why those three metadata columns?**
+"Each one answers a question I'd otherwise have no way to answer. `_source_file` says which file a row came from, for debugging and for the dedupe tie-breaker. `_ingested_at` says when it was loaded, for ordering two versions with the same `updated_at`. `_file_drop_date` says which day's drop it belongs to; it's the partition column, so a query or replay for one day reads one directory."
+
+**Why that dedupe order?**
+"`row_number() over (partition by customer_unique_id order by updated_at desc, _ingested_at desc, _source_file desc)`. `updated_at` alone isn't enough. My unit test has Customer `u2` twice with `updated_at = 2017-01-02`: ZIP `40010` loaded at `2017-01-02 06:00` from `a.csv`, and ZIP `40020` loaded at `2017-01-03 06:00` from `b.csv`. Spark's `row_number()` on a tie is non-deterministic, so without the tie-breakers, Gold could flip between `40010` and `40020` from one run to the next. With them, the later load wins every time, and the test asserts `40020`."
+
+**Why `md5(customer_unique_id)` as the surrogate key?**
+"It's deterministic: rebuilding the table gives every Customer the same key, so facts never need re-pointing. A sequence or `monotonically_increasing_id()` changes on every rebuild. Gold has 324 rows and 324 distinct keys, enforced by `unique` and `not_null` tests on both `customer_key` and `customer_unique_id`."
+
+**Why per-developer schemas?**
+"Two engineers running `dbt build` into a shared `dev.silver` overwrite each other's `stg_customers` mid-test. Every developer gets `dev.dbt_<username>_landing`, `_bronze`, `_silver` and `_gold`, and staging and prod get plain `bronze`, `silver`, `gold`. A single `generate_schema_name` macro decides: in the `dev` target it returns `<target.schema>_<custom_schema>`, otherwise just `<custom_schema>`. A test runs `dbt parse` and asserts the schema of every model in the manifest for each target."
+
+### "Tell me about a difficult problem. How did you solve it, and what was the outcome?"
+
+"Getting the same YAML to produce correct, isolated names in dev and clean names in prod.
+
+**Situation.** After my first `bundle deploy -t dev`, the job was `dbt_thomasjwrightmain_customer_tracer`, but the schemas were `dbt_thomasjwrightmainbronze`, with no underscore. dbt computes `dbt_thomasjwrightmain_silver` from its profile and reads Bronze from `dbt_thomasjwrightmain_bronze`, so every dbt run would fail with `TABLE_OR_VIEW_NOT_FOUND`.
+
+**Action.** Rather than deploy-and-guess, I tested each hypothesis with `databricks bundle validate -t dev -o json`, which resolves every final name without touching the workspace, against throwaway copies of the repo. Five experiments gave four facts:
+1. Development mode prefixes Unity Catalog schemas, and that can't be turned off.
+2. For schemas it strips the trailing `_` from `name_prefix` and then concatenates; for jobs it keeps the `_`.
+3. `name_prefix: ""` doesn't disable it; it falls back to `dev_<user>_`, which would give `dev.dev_thomasjwrightmain_bronze`.
+4. A custom prefix like `dbt_tom_` is rejected: `prefix should contain the current username or ${workspace.current_user.short_name} to ensure uniqueness when using 'mode: development'`.
+
+So the prefix has to contain the username, and the separator has to come from somewhere else. I added one bundle variable:
+
+```yaml
+variables:
+  schema_separator: { default: "" }      # staging, prod: name: landing
+targets:
+  dev:
+    presets: { name_prefix: dbt_${workspace.current_user.short_name}_ }
+    variables: { schema_separator: _ }    # dev: dbt_thomasjwrightmain + _landing
+resources:
+  schemas:
+    landing: { name: ${var.schema_separator}landing }
+```
+
+**Second problem, same week.** The dbt task then failed with `The profile 'analytics_platform' does not have a target named 'dev'. The valid target names for this profile are: - databricks_cluster`. The task had both `warehouse_id` and `profiles_directory`. The dbt task reference says `profiles_directory` can only be set when no `warehouse_id` is set; with a warehouse ID, Databricks generates its own `profiles.yml` with one `databricks_cluster` target and ignores mine. I removed `warehouse_id`, since my profile already points at the warehouse through `http_path`, and added a test asserting `"warehouse_id" not in dbt_task`.
+
+**Outcome.** Dev resolves to `dbt_thomasjwrightmain_landing` and `_bronze` and prod to `landing` and `bronze`, from identical resource YAML. One `profiles.yml` now serves local runs, CI and the job. The job ran green end to end in 91 seconds, with zero manual UI steps. Both behaviours are pinned by tests, so a CLI upgrade that changes them fails in CI, not in a deploy."
+
+### "What are you most proud of?"
+
+"That idempotency is proven at every layer, and that I caught a bug that would have silently broken it.
+
+To make File Drops look like real exports, I changed the file name to include a wall-clock timestamp, along the lines of `customers_20261126T061502.csv`. Then `test_rerunning_on_the_same_file_drop_adds_no_rows` made me think about what a rerun does. Auto Loader identifies files by path, so a rerun of the generator for 2017-01-01 would write a *new* path with the same 331 rows, and Bronze would go to 662 with nothing failing. I changed the name to derive from the drop's own date, `customers_2017-01-01.csv`. That's realistic, because many sources name exports by business date, and it makes generator output byte-for-byte reproducible.
+
+The proof is layered. Locally, `test_rerunning_on_the_same_file_drop_adds_no_rows` runs the real stream twice on a Delta table and asserts the count doesn't change, and `test_a_new_file_drop_adds_only_its_own_rows` asserts a second day adds exactly its rows. On Databricks, Delta history shows one write in four runs, and Bronze stayed at 331 and Gold at 324. The mutation score is 87.4%: mutmut injected bugs into the code, and the tests caught 87.4% of them."
+
+### "Tell me about a data quality decision you'd change."
+
+"Silver currently *drops* invalid rows, and the numbers show why that's not good enough. The drop had 326 distinct Customers, but Gold has 324. The generator replaced 2 Customers' only row with a corrupted one (`zip_code_prefix = 'not-a-zip'`), so 2 Customers (0.6%) are missing from Gold with no trace except a count difference. The 5 duplicates were harmless: exact copies, collapsed to one row each.
+
+Ticket 08 fixes that: `stg_customers` splits into valid rows and a `quarantine.customers` table with the failing rule per row, a quarantine-rate check fails the job above a threshold, and a `replay` parameter reprocesses a date range once the source corrects the data. The drop-rate here, 2 of 331 rows (0.6%), becomes a monitored metric instead of something I found by hand."
+
+### "How would you improve this, and how would it scale to terabytes?"
+
+"I'd start with sizing, from measured numbers. Bronze stored 331 rows in 12,366 bytes of compressed Parquet, about 37 bytes a row, so 1 TB is roughly 25 to 30 billion Customer rows. If that builds up over a year, it's about 2.7 GB a day (projected). Five changes follow from that:
+
+1. **Silver becomes incremental.** Today `stg_customers` is a full rebuild, and its `row_number()` shuffles every Bronze row by `customer_unique_id`. At 1 TB that's a 1 TB shuffle every day. The fix (ticket 06):
+   ```sql
+   {{ config(materialized='incremental', incremental_strategy='merge', unique_key='customer_unique_id') }}
+   ...
+   {% if is_incremental() %}
+   where _ingested_at >= (select max(_ingested_at) - interval 3 days from {{ this }})
+   {% endif %}
+   ```
+   The daily shuffle drops to about 3 days times 2.7 GB, about 8 GB, roughly 125 times less than 1 TB (projected). The 3-day lookback catches late-arriving files. Liquid clustering Silver on `customer_unique_id` lets the `MERGE` skip files that can't contain a match.
+2. **File discovery.** Directory listing scans the landing folder every run, which becomes the bottleneck with millions of files. `cloudFiles.useNotifications = true` switches to cloud storage events, so discovery cost stops growing with history. `cloudFiles.maxBytesPerTrigger = 10g` bounds each micro-batch, so a 30-day backfill of about 80 GB runs in 8 batches instead of one that runs out of memory.
+3. **Partitioning.** At 331 rows a day, daily partitions are tiny files, which is why Databricks recommends liquid clustering below about 1 TB. At 2.7 GB a day, each partition is above the roughly 1 GB guideline, so `partitionBy(_file_drop_date)` becomes the right call. I'd verify with `EXPLAIN` and the `files pruned` metric in the query profile (ticket 16).
+4. **Small files.** Streaming writes create many small files, so I'd set `delta.autoOptimize.optimizeWrite = true` and `autoCompact = true`, and schedule `OPTIMIZE`. A scan that opens 100,000 small files is dominated by per-file overhead.
+5. **Measure first.** Today dbt is 57 of 91 to 101 seconds, about 60% of runtime, but on 331 rows that's almost all fixed overhead (warehouse connection, compilation, 11 test queries). At TB scale the queries dominate. I'd rank models by `execution_time` from dbt's `run_results.json`, and check the Spark UI for skew in the dedupe shuffle: one Customer with a million updates puts a million rows on one task, which AQE's skew handling or salting fixes."
+
+### "Have you worked at terabyte scale?"
+
+"Not on this project; it runs at about 200,000 rows on Databricks Free Edition. What I can show is the core pattern measured, not assumed: incremental ingestion was 2.9 to 5 times faster than a full reload at 91 files, with cost proportional to the day rather than history. I can do the sizing arithmetic for 1 TB, about 25 to 30 billion rows and 2.7 GB a day, and name the five changes it forces: incremental `MERGE` in Silver, notification-mode discovery, `maxBytesPerTrigger`, partitioning sized to the data, and compaction."
+
+### Quick follow-ups
+
+- **"What happens if the checkpoint is deleted?"** Auto Loader forgets what it loaded and reloads every file: Bronze would double to 662 rows. Silver's dedupe would still give 324 Customers, which is why the dedupe sits downstream of an append-only Bronze. The checkpoint lives in the landing volume, outside the watched `customers/` folder, so Auto Loader never reads its own files as data.
+- **"What if a source resends a corrected file under a new name?"** Both load, because Auto Loader tracks paths, not content. Silver's tie-breakers then pick the correction deterministically, by later `updated_at` or later `_ingested_at`.
+- **"Why not `cloudFiles.inferColumnTypes`?"** Inference would type `updated_at` as a date from the first files, and then a `not-a-date` value would land in `_rescued_data`, splitting one column's data across two places. Strings in Bronze keep every value in its own column.
+- **"What does Type 1 cost an analyst?"** If Customer `u1` moves from Campinas to Salvador, Type 1 overwrites the city, so last year's 'orders by city' report silently moves their orders to Salvador. SCD Type 2 (ticket 07) adds `valid_from` and `valid_to`, and facts join on the version that was current at order time.
+- **"Why does the dbt run take 58 s for 331 rows?"** Fixed cost: connecting to the serverless warehouse, compiling the project, and running 3 unit tests and 8 data tests as separate queries. That's why I measure per-model time before optimising anything.
