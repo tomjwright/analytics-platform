@@ -25,7 +25,7 @@ and it is not on this page, add it.
 
    | Principal | Secret expires |
    |---|---|
-   | `sp-staging-deploy` | 2027-02-23 |
+   | `sp-staging-deploy` | 2027-02-24 |
    | `sp-prod-deploy` | 2027-02-23 |
 
 6. Grant each principal write access to its own catalog only. Run in SQL Editor as the workspace admin:
@@ -70,16 +70,27 @@ If a secret leaks, do steps 1-4 at once, deleting the leaked secret first.
 
 ## Proof: staging cannot write to prod
 
-Run as the staging principal, from a local shell (never commit these values):
+Run as the staging principal, from Git Bash, outside the repo (never commit these values):
 
 ```bash
-export DATABRICKS_HOST=https://<workspace>.cloud.databricks.com
+cd ~   # inside the repo, databricks.yml selects your personal CLI profile, which beats these variables
+export DATABRICKS_HOST=https://dbc-c2df7d53-3a0b.cloud.databricks.com
 export DATABRICKS_CLIENT_ID=acb14c44-9506-4f19-9375-e0b223869d04
-export DATABRICKS_CLIENT_SECRET=<staging secret>
-databricks current-user me                    # shows the principal, not you
-databricks schemas create should_fail prod    # expect PERMISSION_DENIED
-databricks schemas create proof_ok staging    # expect success, then drop it
+read -s -p "staging secret: " DATABRICKS_CLIENT_SECRET; export DATABRICKS_CLIENT_SECRET; echo
+databricks current-user me                    # must show the principal, not you
+databricks schemas create should_fail prod    # expect a permission error
+databricks schemas create proof_ok staging    # expect success
+databricks schemas delete staging.proof_ok
 unset DATABRICKS_CLIENT_ID DATABRICKS_CLIENT_SECRET
 ```
 
-Result: (not run yet; paste both outputs here and in the PR)
+Don't type `<placeholders>` into bash: `<` and `>` are redirects, so the export silently fails and the
+CLI falls back to your own admin login, which can write anywhere.
+
+Result (2026-11-26):
+
+```text
+current-user me             userName: acb14c44-9506-4f19-9375-e0b223869d04 (sp-staging-deploy)
+schemas create ... prod     Error: Principal 'sp-staging-deploy' does not have CREATE SCHEMA and USE CATALOG on Catalog 'prod'.
+schemas create ... staging  created: staging.proof_ok, owner acb14c44-9506-4f19-9375-e0b223869d04 (then deleted)
+```
