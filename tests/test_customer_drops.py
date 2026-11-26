@@ -1,7 +1,9 @@
 """The Customer File Drop chaos generator."""
 
 import json
+import urllib.request
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -167,6 +169,24 @@ def test_download_fetches_once_into_the_cache(tmp_path):
 def test_download_uses_the_cache_without_a_network_call(tmp_path):
     (tmp_path / "f.csv").write_text("cached\n")
     assert download("f.csv", tmp_path, base_url="https://example.invalid").read_text() == "cached\n"
+
+
+def test_an_interrupted_download_is_not_cached(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "f.csv").write_text("a,b\n")
+    cache = tmp_path / "cache"
+
+    def interrupted(url, filename):
+        Path(filename).write_text("a,")
+        raise ConnectionResetError
+
+    monkeypatch.setattr(urllib.request, "urlretrieve", interrupted)
+    with pytest.raises(ConnectionResetError):
+        download("f.csv", cache, base_url=source.as_uri())
+    assert not (cache / "f.csv").exists()
+    monkeypatch.undo()
+    assert download("f.csv", cache, base_url=source.as_uri()).read_text() == "a,b\n"
 
 
 def test_download_refuses_plain_http(tmp_path):
