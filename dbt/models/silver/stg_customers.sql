@@ -9,7 +9,11 @@
 with cleaned as (
     select
         trim(customer_unique_id) as customer_unique_id,
-        lpad(trim(zip_code_prefix), 5, '0') as zip_code_prefix,
+        CASE
+            WHEN trim(zip_code_prefix) RLIKE '^[0-9]{1,5}$'
+            THEN lpad(trim(zip_code_prefix), 5, '0')
+            ELSE NULL
+        END AS zip_code_prefix,
         trim(lower(city)) as city,
         trim(upper(state)) as state,
         try_to_date(updated_at) as updated_at,

@@ -43,6 +43,8 @@ unit_tests:
           - {customer_unique_id: u2, zip_code_prefix: not-a-zip, city: salvador, state: BA, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
           - {customer_unique_id: u3, zip_code_prefix: "40010", city: salvador, state: BA, updated_at: not-a-date, _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
           - {customer_unique_id: u4, zip_code_prefix: "40010", city: salvador, state: BA, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+          - {customer_unique_id: u5, zip_code_prefix: "12345abc", city: salvador, state: BA, updated_at: "2017-01-01", _source_file: a.csv, _ingested_at: "2017-01-01 06:00:00"}
+
     expect:
       rows:
         - {customer_unique_id: u4}
