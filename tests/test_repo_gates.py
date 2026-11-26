@@ -79,3 +79,7 @@ def test_sqlfluff_uses_databricks_dialect_and_dbt_templater():
 
 def test_agents_md_lists_the_checks():
     assert "## Checks" in (ROOT / "AGENTS.md").read_text()
+
+
+def test_downloaded_olist_data_is_never_committed():
+    assert "data/" in (ROOT / ".gitignore").read_text().splitlines()

@@ -40,3 +40,17 @@ One entry per ticket, written before you close it.
 - **Development vs production bundle mode?** Development mode prefixes resources with your name, pauses schedules and deploys into your home folder, so experiments don't collide. Production mode deploys unprefixed resources to a shared path and expects a stable identity via `run_as`.
 - **Why pin `databricks/setup-cli` to a SHA?** A tag can be moved to different code; a SHA cannot. The deploy job holds prod credentials, so it must only run code I've reviewed. Renovate (ticket 17) proposes updates as PRs.
 - **What would you improve?** Restrict the shared bundle folder so only the deploy principals can write to it, and add a scheduled check that each principal can still log in, so an expired secret is caught before release day.
+
+## Ticket 03: Chaos generator for Customer File Drops
+
+- **Decision:** A seeded Python generator replays Olist Customers as one full CSV snapshot per day, written to `customers/ingest_date=YYYY-MM-DD/customers.csv`. A Customer first appears on the day of their first Order. Duplicates, malformed rows and address changes are injected at rates passed on the command line. The Olist files are downloaded at runtime from a GitHub mirror pinned to one commit, then cached locally.
+- **Rejected alternative and why:** Committing the Olist CSVs, or a hand-made sample. Committing adds about 25 MB of third-party data (customers plus orders) to every clone, and a small hand-made sample has none of the real mess (repeat Customers, 99,441 rows). An unseeded generator was rejected too: every run would give different data, so a failing Silver test could never be reproduced.
+- **Impact (numbers where you can):** 3 fault types (`missing_id`, `bad_zip`, `bad_date`) plus duplicates and address changes, each with its own test and rate. The same seed gives byte-identical files, so every later ticket tests against exactly the same mess. 99,441 Olist Customer rows collapse to 96,096, one per `customer_unique_id`. 3 real days from 2017-01-01 gave 331, 329 and 327 rows.
+- **Hardest moment and how you got past it:** Making a stateful random process repeatable. Address changes depend on yesterday's state, so the generator walks Customers in sorted ID order and draws every random number from one `random.Random(seed)`, in a fixed order. Any loop over an unordered set would have broken byte identity. Mutation testing then showed tests that ran lines without checking them (for example, that a moved Customer gets a real address), and fixing those raised the score from 78.9% to 87.4%.
+
+### Likely follow-up questions
+
+- **Why full snapshots, not changes only?** Many source systems can only export the whole table. It forces Bronze to keep every file and Silver to work out what changed, which is the realistic, harder case.
+- **Why does the chaos have to be repeatable?** A data test that fails must fail the same way on the next run, or you can't tell a fix from luck. A seed turns random data into a fixed fixture.
+- **Why pin the download to a commit?** A branch can change under you; a commit cannot. Same idea as pinning actions to a SHA.
+- **What would you improve?** Validate that rates are between 0 and 1 and that `--days` is positive, add schema drift (a new or renamed column on some day), and checksum the downloaded files.
