@@ -25,10 +25,13 @@ analytics_platform:
       token: "{{ env_var('DBT_ACCESS_TOKEN', 'placeholder') }}"
       catalog: prod
       schema: default
-    # TODO(ticket 05): a `ci` output for slim CI on GitHub Actions.
-    # - Same host and http_path as above, catalog staging.
-    # - schema: ci_pr_<n>, with <n> from env_var('DBT_PR_NUMBER'). Give it a default so `dbt parse` works offline.
-    # - Log in as the staging service principal with OAuth M2M, no token: auth_type oauth, plus client_id and
-    #   client_secret from the DATABRICKS_CLIENT_ID / DATABRICKS_CLIENT_SECRET env vars the workflow already sets.
-    #   (Defaults again, so parsing never needs the real secret.)
-    # Docs: https://docs.getdbt.com/docs/core/connect-data-platform/databricks-setup
+    ci:
+      type: databricks
+      host: "{{ env_var('DBT_HOST', 'dbc-c2df7d53-3a0b.cloud.databricks.com') }}"
+      http_path: /sql/1.0/warehouses/63496ac182465c07
+      catalog: staging
+      schema: "ci_pr_{{ env_var('DBT_PR_NUMBER', '999') }}"
+      auth_type: oauth
+      client_id: "{{ env_var('DATABRICKS_CLIENT_ID', 'placeholder') }}"
+      client_secret: "{{ env_var('DATABRICKS_CLIENT_SECRET', 'placeholder') }}"
+
