@@ -10,9 +10,9 @@ import json
 import sys
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import current_timestamp  # noqa: F401  TODO(ticket 06): drop the noqa once record uses it
+from pyspark.sql.functions import current_timestamp
 
-from analytics_platform.rollback import restore_statements, versions_for_run  # noqa: F401  TODO(ticket 06): ditto, in restore
+from analytics_platform.rollback import restore_statements, versions_for_run
 
 VERSIONS_SCHEMA = "run_id string, table_name string, version bigint"
 
@@ -30,33 +30,37 @@ def current_version(spark: SparkSession, table: str) -> int:
 
 def record(spark: SparkSession, catalog: str, gold_schema: str, ops_schema: str, run_id: str) -> int:
     """Append one row per Gold table to <catalog>.<ops_schema>.gold_versions. Returns how many.
-
     The job runs this just before dbt, so the rows say "this is Gold as it was before run <run_id>".
-
-    TODO(ticket 06):
-    - CREATE TABLE IF NOT EXISTS the versions table: run_id STRING, table_name STRING, version BIGINT,
-      recorded_at TIMESTAMP.
-    - One (run_id, table, version) tuple per table from gold_tables(...), using current_version(...).
-    - If there are any: spark.createDataFrame(rows, VERSIONS_SCHEMA), add recorded_at with
-      current_timestamp(), and append it with .write.mode("append").saveAsTable(...).
-    - The very first run has no Gold yet: record nothing and don't fail. Why might Delta's own
-      DESCRIBE HISTORY not be enough on its own, without this table? (Hint: which run made which version?)
     """
-    raise NotImplementedError
-
+    versions_table = f"{catalog}.{ops_schema}.gold_versions"
+    spark.sql(
+        f"CREATE TABLE IF NOT EXISTS {versions_table} "
+        "(run_id STRING, table_name STRING, version BIGINT, recorded_at TIMESTAMP)"
+    )
+    tables = gold_tables(spark, catalog, gold_schema)
+    current_gold_version = {table: current_version(spark, table) for table in tables}
+    # empty on first run
+    if not current_gold_version:
+        return 0
+    rows = [(run_id, table, version) for table, version in current_gold_version.items()]
+    df = spark.createDataFrame(rows, VERSIONS_SCHEMA)
+    df = df.withColumn("recorded_at", current_timestamp())
+    df.write.mode("append").saveAsTable(versions_table)
+    return len(rows)
+    
 
 def restore(spark: SparkSession, catalog: str, ops_schema: str, run_id: str) -> list[str]:
-    """RESTORE each Gold table to the version recorded before run_id. Returns the statements it ran.
-
-    TODO(ticket 06):
-    - Read the versions table, turn each Row into a dict (row.asDict()).
-    - versions_for_run(...) then restore_statements(...), from rollback.py.
-    - No statements means a wrong run id: raise ValueError("no Gold versions were recorded before run <id>").
-      A silent no-op here would let you think you'd recovered when you hadn't.
-    - Run each statement with spark.sql.
-    """
-    raise NotImplementedError
-
+    """RESTORE each Gold table to the version recorded before run_id. Returns the statements it ran."""
+    versions_df = spark.table(f"{catalog}.{ops_schema}.gold_versions").collect()
+    versions = [row.asDict() for row in versions_df]
+    versions_before_run = versions_for_run(versions, run_id)
+    statements = restore_statements(versions_before_run)
+    if not statements:
+        raise ValueError(f"no Gold versions were recorded before run {run_id}")
+    for statement in statements:
+        spark.sql(statement)
+    return statements
+    
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
