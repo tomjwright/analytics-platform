@@ -18,11 +18,7 @@
 
         {{ default_schema }}
 
-{%- elif target.name == 'dev' -%}
-
-        {{ default_schema }}_{{ custom_schema_name | trim }}
-
-{%- elif target.name == 'ci' -%}
+{%- elif target.name in ('dev', 'ci') -%}
 
         {{ default_schema }}_{{ custom_schema_name | trim }}
 
