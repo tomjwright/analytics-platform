@@ -1,9 +1,28 @@
 # Ticket 06: put Gold back to how it was before a given customer_tracer run.
 # Run it with: databricks bundle run restore_gold --target prod --params run_id=<customer_tracer run id>
-#
-# TODO(ticket 06): a `restore_gold` job.
-# - One job parameter, `run_id`, default "". Docs: https://docs.databricks.com/aws/en/jobs/job-parameters
-# - One task, also restore_gold: the same gold_versions.py as record_gold_versions in customer_tracer_job.yml,
-#   with `restore` instead of `record`, and --run-id "{{job.parameters.run_id}}" (the job parameter, not this run's id).
-# - It needs its own `environments:` block with python_env, like customer_tracer.
-resources: {}
+resources:
+  jobs:
+    restore_gold:
+      name: restore_gold
+      parameters:
+        - name: run_id
+          default: ""
+      tasks:
+        - task_key: restore_gold
+          environment_key: python_env
+          spark_python_task:
+            python_file: ../src/analytics_platform/gold_versions.py
+            parameters:
+              - restore
+              - --catalog
+              - ${var.catalog}
+              - --gold-schema
+              - ${var.gold_schema}
+              - --ops-schema
+              - ${resources.schemas.ops.name}
+              - --run-id
+              - "{{job.parameters.run_id}}"
+      environments:
+        - environment_key: python_env
+          spec:
+            environment_version: "6"
