@@ -29,8 +29,9 @@ Answers about the whole platform, organised by the questions a data engineering 
 | E14 | First PR dbt build (no manifest, so a full build) | 13 dbt nodes into `staging.ci_pr_31_*`: 51 s of dbt, 62 s for the whole job | Actions job timings |
 | E15 | Merge to prod tag | 12.4 min: staging 2.5 min (deploy 6 s, pipeline 94 s, manifest publish 28 s), waiting for approval 7.2 min, prod 2.7 min (deploy 8 s, pipeline 118 s, tag 3 s). 5.2 min of it is machine time, 0 UI edits | Actions job timings |
 | E16 | PR cleanup | Closing the PR dropped its `ci_pr_31_*` schemas in 31 s; `staging.ci_pr_31_silver` then "does not exist" | Actions, CLI |
+| E17 | Slim CI on a PR that changes no models | Staging's manifest fetched; `state:modified+` selected 0 of 13 nodes. dbt step 13 s instead of 51 s (3.9x), job 33 s instead of 62 s | Actions job timings |
 
-Pending: slim CI build counts and time on a PR with a manifest, rollback time, quarantine rate over time, SCD2 versions per Customer, `merge` vs `insert_overwrite` timings, partitioning vs liquid clustering pruning, the slow query before and after, PII masking proof.
+Pending: slim CI time on a PR that changes one model, rollback time, quarantine rate over time, SCD2 versions per Customer, `merge` vs `insert_overwrite` timings, partitioning vs liquid clustering pruning, the slow query before and after, PII masking proof.
 
 ## The pitch
 
@@ -231,10 +232,10 @@ Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers 
 
 **Impact:**
 - **Lead time:** "Merge to prod tag took 12.4 minutes. 7.2 of those were waiting for my approval, so the pipeline itself is 5.2 minutes, with 0 UI edits (E15)."
-- **CI cost:** "The first PR build had no manifest, so it built all 13 dbt nodes in 51 s (E14). Every PR after that builds only what changed."
+- **CI cost:** "The first PR build had no manifest, so it built all 13 dbt nodes in 51 s (E14). The next PR changed no models: slim CI selected 0 nodes and the dbt step took 13 s, 3.9 times faster (E17). The saving grows with the project, because a full build grows with every model and slim CI grows only with the change."
 - **No leaks:** "Closing a PR dropped its schemas in 31 s (E16)."
 - **Safety net:** "Mutation score 87.4% (E9): when the tool deliberately broke the code, the tests caught 87.4% of the breakages. A planted fake key was blocked before merge. 0 known vulnerabilities in 132 packages."
-- Pending: slim CI build time on a PR that has a manifest to compare against.
+- Pending: slim CI time on a PR that changes one model.
 
 **Why I designed it this way:**
 - **Staging as the slim-CI baseline, not prod:** "The usual pattern defers to prod. A PR runs code nobody has approved yet, so I didn't want its identity to have any read access on prod. Comparing against staging keeps the least-privilege proof (E10) true for CI too. The trade-off is that staging's data is synthetic and one merge behind prod. That's acceptable because staging runs the same pipeline on every merge."
