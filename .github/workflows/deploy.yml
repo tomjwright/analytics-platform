@@ -50,11 +50,6 @@ jobs:
             DBT_PROFILES_DIR=. uv run dbt parse --target staging
             cd ..
             databricks fs cp dbt/target/manifest.json dbfs:/Volumes/staging/ops/artifacts/manifest.json --overwrite
-          # TODO(ticket 05): only after the job above succeeded (steps stop at the first failure, so order
-          # is enough), save this commit's manifest where slim CI looks for it:
-          # - `dbt parse --target staging` writes dbt/target/manifest.json without touching the warehouse.
-          #   Run it from dbt/ with DBT_PROFILES_DIR pointing at dbt/ (see tests/test_customer_tracer.py).
-          # - Copy it to dbfs:/Volumes/staging/ops/artifacts/manifest.json, replacing yesterday's (--overwrite).
     prod:
       runs-on: ubuntu-latest
       environment: prod

@@ -11,7 +11,7 @@ permissions:
 
 # A new push cancels the previous run for the same PR, saving minutes.
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: pr-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' }}
   cancel-in-progress: true
 
 jobs:
@@ -124,9 +124,6 @@ jobs:
   # Slim CI: build only the models this PR changed, plus everything downstream, into staging's
   # ci_pr_<n>_* schemas. Unchanged parents are read from staging instead of being rebuilt.
   dbt_ci:
-    # TODO(ticket 05): run only when the PR comes from this repo, not a fork: forks get no secrets,
-    # so the job would fail. Compare github.event.pull_request.head.repo.full_name with github.repository.
-    # Bonus: skip title-only `edited` events too (github.event.action), they change no SQL.
     if: github.repository == github.event.pull_request.head.repo.full_name && github.event.action != 'edited'
     runs-on: ubuntu-latest
     environment: staging
@@ -135,7 +132,6 @@ jobs:
       DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
       DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
       DBT_PR_NUMBER: ${{ github.event.pull_request.number }}
-      # TODO(ticket 05): DBT_PR_NUMBER, from the pull_request event. profiles.yml turns it into ci_pr_<n>.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -146,9 +142,5 @@ jobs:
         run: |
           mkdir -p state 
           databricks fs cp dbfs:/Volumes/staging/ops/artifacts/manifest.json state/manifest.json || echo "No manifest yet"
-        # TODO(ticket 05): copy /Volumes/staging/ops/artifacts/manifest.json into state/.
-          # - `databricks fs cp dbfs:/Volumes/... <local path>` (paths in volumes need the dbfs: prefix).
-          # - On the very first run there is no manifest yet. That must not fail the job:
-          #   `cicd build` then builds everything. (Hint: `||`.)
       - name: Build the changed models
         run: uv run python -m analytics_platform.cicd build state
