@@ -26,8 +26,12 @@ Answers about the whole platform, organised by the questions a data engineering 
 | E11 | Reproducibility | The same seed produces byte-identical File Drops (`diff -r` on two runs) | generator test |
 | E12 | Credentials | 2 deploy principals, OAuth M2M secrets with 90-day expiry, prod behind 1 required reviewer | GitHub Environments |
 | E13 | Cost | $0: Databricks Free Edition, serverless only, public GitHub Actions minutes | billing |
+| E14 | First PR dbt build (no manifest, so a full build) | 13 dbt nodes into `staging.ci_pr_31_*`: 51 s of dbt, 62 s for the whole job | Actions job timings |
+| E15 | Merge to prod tag | 12.4 min: staging 2.5 min (deploy 6 s, pipeline 94 s, manifest publish 28 s), waiting for approval 7.2 min, prod 2.7 min (deploy 8 s, pipeline 118 s, tag 3 s). 5.2 min of it is machine time, 0 UI edits | Actions job timings |
+| E16 | PR cleanup | Closing the PR dropped its `ci_pr_31_*` schemas in 31 s; `staging.ci_pr_31_silver` then "does not exist" | Actions, CLI |
+| E17 | Slim CI on a PR that changes no models | Staging's manifest fetched; `state:modified+` selected 0 of 13 nodes. dbt step 13 s instead of 51 s (3.9x), job 33 s instead of 62 s | Actions job timings |
 
-Pending: slim CI build counts and time, staging-to-prod lead time, rollback time, quarantine rate over time, SCD2 versions per Customer, `merge` vs `insert_overwrite` timings, partitioning vs liquid clustering pruning, the slow query before and after, PII masking proof.
+Pending: slim CI time on a PR that changes one model, rollback time, quarantine rate over time, SCD2 versions per Customer, `merge` vs `insert_overwrite` timings, partitioning vs liquid clustering pruning, the slow query before and after, PII masking proof.
 
 ## The pitch
 
@@ -58,7 +62,7 @@ flowchart LR
 | Gold | Kimball star: `dim_customer` (SCD2), `dim_product`, `dim_seller`, `dim_date`, `fct_order_items`, `fct_payments`, `fct_orders`, `customer_rfm` | dbt; facts merged on grain key | dbt |
 | Ops | One audit row per task run, dbt `run_results` | Append | Job tasks |
 
-Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers get `dev.dbt_<user>_*` schemas, PRs get `dev.ci_pr_<n>_*`, and staging and prod use plain `bronze`, `silver`, `gold`.
+Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers get `dev.dbt_<user>_*` schemas, PRs get `staging.ci_pr_<n>_*`, and staging and prod use plain `bronze`, `silver`, `gold`.
 
 ## Design questions
 
@@ -211,7 +215,7 @@ Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers 
 
 ### How are environments separated?
 
-**Answer:** "Three Unity Catalog catalogs (`dev`, `staging`, `prod`) in one workspace, each with its own deploy service principal that can write only to its own catalog. Inside `dev`, every developer gets `dbt_<user>_*` schemas and every PR gets `ci_pr_<n>_*` schemas, dropped when the PR closes. The same bundle YAML and the same dbt profile produce all of it from the target name."
+**Answer:** "Three Unity Catalog catalogs (`dev`, `staging`, `prod`) in one workspace, each with its own deploy service principal that can write only to its own catalog. Inside `dev`, every developer gets `dbt_<user>_*` schemas. Inside `staging`, every PR gets `ci_pr_<n>_*` schemas, dropped when the PR closes. The same bundle YAML and the same dbt profile produce all of it from the target name."
 
 **Impact:** "The staging principal was denied creating a schema in prod (E10), so a leaked staging secret can't touch prod data. Per-developer schemas mean two engineers' test runs can never overwrite each other's tables."
 
@@ -221,15 +225,45 @@ Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers 
 
 ### Walk me through your CI/CD.
 
-**Answer:** "On every PR: 13 gates. Ruff and sqlfluff, mypy, pytest with local Spark and a coverage floor, mutation testing with an 85% floor, a dependency audit, a licence check, secrets scanning, Semgrep, CodeQL, workflow linting, `bundle validate`, and slim dbt CI into PR schemas. On merge: deploy the staging target as the staging service principal, run the job, then wait for my approval in a protected GitHub Environment. Prod then deploys the same commit and tags it `prod-<date>-<sha>`. A concurrency group stops two deploys overlapping."
+**Answer:** "Three moments, each a GitHub Actions workflow, and nobody opens the Databricks UI.
+1. **Pull request:** 13 gates. Ruff and sqlfluff, mypy, pytest with local Spark and a coverage floor, mutation testing with an 85% floor, a dependency audit, a licence check, secrets scanning, Semgrep, CodeQL, workflow linting and slim dbt CI. Slim CI authenticates as the staging service principal and downloads staging's last `manifest.json` from a Unity Catalog volume. It then runs `dbt build --select state:modified+ --defer --state`, which builds only the changed models and everything downstream of them, into `staging.ci_pr_<n>_silver` and `_gold`. Unchanged parents resolve to staging's real tables. With no manifest, it builds everything.
+2. **Merge:** the staging job deploys the bundle as the staging principal, runs the whole pipeline, then runs `dbt parse` and publishes the manifest the next PR compares against. The prod job needs staging to pass, and it waits behind a protected GitHub Environment with a required reviewer. After approval it deploys and runs the same commit, then tags it `prod-<date>-<sha>`.
+3. **PR closes:** a cleanup workflow lists staging's schemas, filters the exact `ci_pr_<n>_` prefix in unit-tested Python, and drops them."
 
-**Impact:** "Mutation score 87.4% (E9): when the tool deliberately broke the code, the tests caught 87.4% of the breakages. A planted fake key was blocked before merge. 0 known vulnerabilities in 132 packages. Pending: PR-to-prod lead time, and slim CI build time vs a full build."
+**Impact:**
+- **Lead time:** "Merge to prod tag took 12.4 minutes. 7.2 of those were waiting for my approval, so the pipeline itself is 5.2 minutes, with 0 UI edits (E15)."
+- **CI cost:** "The first PR build had no manifest, so it built all 13 dbt nodes in 51 s (E14). The next PR changed no models: slim CI selected 0 nodes and the dbt step took 13 s, 3.9 times faster (E17). The saving grows with the project, because a full build grows with every model and slim CI grows only with the change."
+- **No leaks:** "Closing a PR dropped its schemas in 31 s (E16)."
+- **Safety net:** "Mutation score 87.4% (E9): when the tool deliberately broke the code, the tests caught 87.4% of the breakages. A planted fake key was blocked before merge. 0 known vulnerabilities in 132 packages."
+- Pending: slim CI time on a PR that changes one model.
 
-**How I'd do it differently:** "OIDC federation instead of client secrets: no long-lived secret at all, but Free Edition has no account console, so it's documented in an ADR. Trunk-based development with feature flags instead of an approval gate suits teams that deploy many times a day."
+**Why I designed it this way:**
+- **Staging as the slim-CI baseline, not prod:** "The usual pattern defers to prod. A PR runs code nobody has approved yet, so I didn't want its identity to have any read access on prod. Comparing against staging keeps the least-privilege proof (E10) true for CI too. The trade-off is that staging's data is synthetic and one merge behind prod. That's acceptable because staging runs the same pipeline on every merge."
+- **The same commit in prod:** "Both jobs are in one workflow run, and checkout uses that run's `github.sha`, never `main`. If I approve tomorrow, prod still gets the commit staging tested today, even if `main` has moved on."
+- **Tags:** "The newest `prod-*` tag answers 'what's live?'. `git log` between 2 tags is the change list, and rollback means redeploying the previous tag."
+- **Least privilege in the pipeline itself:**
+  - **Token:** workflows default to `contents: read`. Only the approved prod job gets `contents: write`, to create the tag.
+  - **Forks:** fork PRs skip dbt CI, so staging secrets never reach untrusted code.
+  - **Supply chain:** every action is pinned to a full commit SHA, and zizmor scans the workflows.
+- **The exact prefix, in Python:** "`startswith('ci_pr_1')` also matches PRs 10 to 19 and 100 to 199. The trailing underscore and a unit test stop closing PR 1 from dropping PR 12's schemas. Shell logic like that is where cleanup jobs delete the wrong thing, so I moved it somewhere testable."
+
+**How I'd do it differently:**
+- **Defer to prod with a read-only CI principal:** CI would get realistic data and an exact prod baseline, at the cost of one prod read grant. That's the right trade where staging data isn't representative.
+- **Zero-copy clones:** shallow-clone the parents into the PR schema instead of deferring. Each PR gets an isolated snapshot that can't change under it mid-run.
+- **A separate tag job:** a tiny third job with `contents: write` that installs nothing. Then no third-party package ever holds the write token, not even in prod.
+- **OIDC federation instead of client secrets:** no long-lived secret at all. Free Edition has no account console, so it's documented in an ADR.
+- **Trunk-based development with feature flags:** suits teams that deploy many times a day better than an approval gate.
+
+**At terabyte scale:** "Slim CI matters more as data grows, because its cost tracks the change, not the history. Three more things I'd add:
+- **Bounded CI data:** a date filter in the `ci` target, so a changed fact model builds over the last 3 days, not years. At about 2.7 GB a day, that's roughly 8 GB instead of 1 TB (projected).
+- **Schema-only builds:** `dbt build --empty` for wide changes. It proves every model compiles and runs against the real schemas with zero rows.
+- **A TTL sweep:** for PR schemas, so 50 open PRs can't fill the warehouse."
 
 **Follow-ups:**
-- *"How do you guarantee prod runs what staging tested?"* "Both jobs check out the triggering commit SHA, not `main`, and prod can't start unless staging passed."
-- *"What does slim CI do on the very first run, with no prod manifest?"* "It falls back to building everything. After that, each prod deploy publishes its manifest for the next PR."
+- *"What does slim CI do on the very first run, with no manifest?"* "It falls back to building everything. That exposed a bootstrap gap. A fresh staging had schemas but no tables, because a deploy creates infrastructure and only a run creates data. One bootstrap run of the deployed job fixed it, and every merge has refreshed staging since."
+- *"What if staging's manifest is stale?"* "It's only published after staging succeeds, so it's always the last green state. If staging fails, the next PR compares against an older manifest and selects more models than it needs to. That's slower, never wrong."
+- *"What if two merges land together?"* "The deploy workflow has one concurrency group with `cancel-in-progress: false`, so deploys queue instead of overlapping or cancelling a half-finished prod run."
+- *"What if a PR is closed while it has merge conflicts?"* "GitHub doesn't start `pull_request` workflows for a PR that can't merge, so its schemas would leak. The fix is a scheduled sweep that drops `ci_pr_*` schemas whose PR is closed, rather than trusting one event."
 
 ### How do you roll back?
 
@@ -295,7 +329,20 @@ Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers 
 
 **Result:** "Four runs on the same file produced one Bronze write, 331 rows (E5). Gold stayed at 324 Customers with 324 unique keys. Incremental loading was 2.9 to 5 times faster than full reloads at 91 days, and it can't double-load."
 
-*Replace or add to this as later work produces a harder story: slim CI's first-run manifest, SCD2 with late-arriving changes, or the slow-query diagnosis.*
+*Replace or add to this as later work produces a harder story: SCD2 with late-arriving changes, or the slow-query diagnosis.*
+
+### "Tell me about a time your tests gave you false confidence."
+
+**Situation:** "I'd built a PR-to-production pipeline. The PR showed every check green, including slim dbt CI, and I was about to call it done."
+
+**Task:** "Prove the dbt job had actually run against the warehouse, not just shown a green tick."
+
+**Action:** "I opened the job's run, not just the check list. dbt had never run, for 3 separate reasons:
+- **Cancelled runs:** editing the PR description fires an `edited` event, which joined the same concurrency group as the code run and cancelled it. The `edited` run skips dbt CI by design, and GitHub shows a skipped job as passing. I split the concurrency group by event type, so an edit can only cancel another edit.
+- **A path bug:** the Python wrapper ran dbt from the `dbt/` directory but passed it the manifest path relative to the repo root. dbt would have looked in `dbt/state` and aborted. An automated review caught it before merge. I resolved the path to an absolute one and added a test that runs from a different directory.
+- **An empty environment:** staging had been deployed but never run, so the source table didn't exist. A deploy creates infrastructure, not data. One bootstrap run of the deployed job, from the CLI, created it."
+
+**Result:** "The next push ran dbt CI for real. It built 13 nodes in 51 s (E14). After merge, staging-to-prod ran in 5.2 minutes of machine time with 0 UI edits (E15), and the PR's schemas were dropped in 31 s (E16). The lesson I keep is that 'skipped' is not 'passed'. I check that a gate ran, not that it's green."
 
 ### "Tell me about a time a tool didn't behave as documented."
 
@@ -303,7 +350,7 @@ Environments are Unity Catalog catalogs `dev`, `staging` and `prod`. Developers 
 
 ### "What are you most proud of?"
 
-Pending: the full PR-to-prod promotion with no UI edits. Until then: "The safety net. 13 CI gates, with mutation testing at 87.4%. Coverage only tells you a line ran; mutation testing tells you a test would notice if that line were wrong. When I first ran it, it exposed tests that executed code without checking it, and fixing them raised the score from 78.9% to 87.4%."
+"A SQL change goes from pull request to production with no UI edits. It's tested on real tables in its own schemas, staging runs the whole pipeline, I approve, and prod gets the exact commit staging tested, tagged so I always know what's live. Merge to prod tag took 12.4 minutes, 5.2 of them machine time (E15). Under it is the safety net: 13 CI gates, with mutation testing at 87.4%. Coverage only tells you a line ran; mutation testing tells you a test would notice if that line were wrong. When I first ran it, it exposed tests that executed code without checking it, and fixing them raised the score from 78.9% to 87.4%."
 
 ### "Tell me about a mistake."
 
@@ -327,6 +374,9 @@ Pending: the full PR-to-prod promotion with no UI edits. Until then: "The safety
 - Partitioning vs liquid clustering vs Z-order?
 - How do you handle a breaking schema change from a source?
 - What's in your CI? Why mutation testing?
+- What does slim CI compare against? Why not prod?
+- How do you know prod runs exactly what staging tested?
+- A required check is green but never ran. How would you notice?
 - How do you roll back bad data, not just bad code?
 - How do you secure PII? Who can see what?
 - A query got 10 times slower overnight. What do you do?
