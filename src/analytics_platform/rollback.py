@@ -21,5 +21,6 @@ def versions_for_run(rows: list[dict[str, Any]], run_id: str) -> dict[str, int]:
 
 def restore_statements(versions: dict[str, int]) -> list[str]:
     """One Delta RESTORE per table, sorted by table name so the order is predictable."""
-    return [f"RESTORE TABLE {table_name} TO VERSION AS OF {version}"
-            for table_name, version in sorted(versions.items())]
+    return [
+        f"RESTORE TABLE {table_name} TO VERSION AS OF {version}" for table_name, version in sorted(versions.items())
+    ]
