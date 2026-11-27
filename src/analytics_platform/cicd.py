@@ -41,8 +41,8 @@ def main(argv: list[str]) -> int:
     command, *rest = argv
     if command == "build":
         env = {**os.environ, "DBT_PROFILES_DIR": str(DBT_DIR)}
-        # Fixed arguments, not user input.
-        result = subprocess.run(["dbt", *build_args(Path(rest[0]))], cwd=DBT_DIR, env=env, check=False)  # noqa: S603, S607
+        # Fixed arguments, not user input. The state path is resolved because dbt runs from DBT_DIR.
+        result = subprocess.run(["dbt", *build_args(Path(rest[0]).resolve())], cwd=DBT_DIR, env=env, check=False)  # noqa: S603, S607
         return result.returncode
     if command == "drop-list":
         names = [row["name"] for row in json.load(sys.stdin)]

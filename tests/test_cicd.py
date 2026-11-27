@@ -55,6 +55,18 @@ def test_main_build_runs_dbt_in_the_project_with_its_profile(tmp_path, monkeypat
     assert "PATH" in kwargs["env"]
 
 
+def test_main_build_gives_dbt_an_absolute_state_path(tmp_path, monkeypatch):
+    (tmp_path / "state").mkdir()
+    (tmp_path / "state" / "manifest.json").write_text("{}")
+    monkeypatch.chdir(tmp_path)
+    calls = []
+    monkeypatch.setattr(
+        subprocess, "run", lambda args, **kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0)
+    )
+    assert main(["build", "state"]) == 0
+    assert calls[0][-1] == str(tmp_path / "state")
+
+
 def test_main_build_fails_when_dbt_fails(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda args, **kwargs: subprocess.CompletedProcess(args, 1))
     assert main(["build", str(tmp_path)]) == 1
