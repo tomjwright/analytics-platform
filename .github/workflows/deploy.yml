@@ -17,7 +17,6 @@ name: deploy
 on:
   push:
     branches: [main]
-    paths-ignore: ["docs/**", "**/*.md"]
   workflow_dispatch:
 
 permissions:
@@ -76,4 +75,4 @@ jobs:
           run: |
             GITHUB_SHA=$(git rev-parse HEAD)
             tag=$(uv run python -m analytics_platform.cicd tag "$GITHUB_SHA" "$(date -u +%F)")
-            gh release create "$tag" --target "$GITHUB_SHA" --generate-notes --latest
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$tag" -f sha="$GITHUB_SHA"
