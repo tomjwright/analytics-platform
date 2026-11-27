@@ -47,7 +47,7 @@ def record(spark: SparkSession, catalog: str, gold_schema: str, ops_schema: str,
     df = df.withColumn("recorded_at", current_timestamp())
     df.write.mode("append").saveAsTable(versions_table)
     return len(rows)
-    
+
 
 def restore(spark: SparkSession, catalog: str, ops_schema: str, run_id: str) -> list[str]:
     """RESTORE each Gold table to the version recorded before run_id. Returns the statements it ran."""
@@ -60,7 +60,7 @@ def restore(spark: SparkSession, catalog: str, ops_schema: str, run_id: str) -> 
     for statement in statements:
         spark.sql(statement)
     return statements
-    
+
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
