@@ -60,6 +60,13 @@ resources:
         #   so your models land in dbt_<you>_silver and dbt_<you>_gold. (Why does prod not need it?)
         # - environment_key: dbt_env
         # Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/job-task-types#dbt-task
+        # TODO(ticket 06): a record_gold_versions task, so every run first saves Gold's current versions.
+        # - It runs after bronze_customers, and dbt must then depend on it instead (change dbt's depends_on).
+        # - Copy bronze_customers' shape: python_env, spark_python_task, python_file ../src/analytics_platform/gold_versions.py
+        # - Parameters: record, --catalog ${var.catalog}, --gold-schema ${var.gold_schema},
+        #   --ops-schema ${resources.schemas.ops.name}, --run-id "{{job.run_id}}"
+        #   ({{job.run_id}} is a dynamic value: Databricks fills in this run's id when it starts.)
+        # Docs: https://docs.databricks.com/aws/en/jobs/dynamic-value-references
         - task_key: dbt
           depends_on:
             - task_key: bronze_customers

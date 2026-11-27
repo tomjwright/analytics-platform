@@ -66,11 +66,13 @@ exclude_also = ["if __name__ == .__main__.:"]
 source_paths = ["src/analytics_platform/"]
 pytest_add_cli_args_test_selection = ["tests/"]
 # Spark can't run inside mutmut's forked workers, so the Spark code and its tests stay out.
-do_not_mutate = ["src/analytics_platform/bronze.py"]
+do_not_mutate = ["src/analytics_platform/bronze.py", "src/analytics_platform/gold_versions.py"]
 pytest_add_cli_args = [
     "--ignore=tests/test_repo_gates.py",
     "--ignore=tests/test_free_edition.py",
     "--ignore=tests/test_customer_tracer.py",
     "--ignore=tests/test_bronze.py",
     "--ignore=tests/test_tracer_cicd.py",
+    "--ignore=tests/test_gold_versions.py",
+    "--ignore=tests/test_rollback_cicd.py",
 ]
