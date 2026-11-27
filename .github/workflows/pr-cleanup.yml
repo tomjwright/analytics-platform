@@ -13,7 +13,7 @@ permissions:
 jobs:
   drop_pr_schemas:
     # TODO(ticket 05): the same fork check as dbt_ci in pr.yml.
-    if: github.repository == 'TODO(ticket 05)'
+    if: github.repository == github.event.pull_request.head.repo.full_name && github.event.action != 'edited'
     runs-on: ubuntu-latest
     environment: staging
     env:
@@ -33,4 +33,7 @@ jobs:
         # - Pipe that into `uv run python -m analytics_platform.cicd drop-list "$PR_NUMBER"`.
         # - Delete each name it prints: `databricks schemas delete "staging.<name>" --force`
         #   (--force because the schemas still hold tables). Hint: `| while read -r name; do ...; done`.
-        run: echo "TODO(ticket 05)" && exit 1
+        run: |
+          databricks schemas list staging -o json | uv run python -m analytics_platform.cicd drop-list "$PR_NUMBER" | while read -r name; do
+            databricks schemas delete "staging.$name" --force
+          done
