@@ -25,3 +25,13 @@ analytics_platform:
       token: "{{ env_var('DBT_ACCESS_TOKEN', 'placeholder') }}"
       catalog: prod
       schema: default
+    ci:
+      type: databricks
+      host: "{{ env_var('DBT_HOST', 'dbc-c2df7d53-3a0b.cloud.databricks.com') }}"
+      http_path: /sql/1.0/warehouses/63496ac182465c07
+      catalog: staging
+      schema: "ci_pr_{{ env_var('DBT_PR_NUMBER', '999') }}"
+      auth_type: oauth
+      client_id: "{{ env_var('DATABRICKS_CLIENT_ID', 'placeholder') }}"
+      client_secret: "{{ env_var('DATABRICKS_CLIENT_SECRET', 'placeholder') }}"
+

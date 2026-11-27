@@ -73,7 +73,7 @@ def test_deploys_use_oauth_client_credentials_not_a_token():
 def test_each_target_is_validated_deployed_and_run():
     text = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
     for target in ("staging", "prod"):
-        for command in ("validate", "deploy", "run hello"):
+        for command in ("validate", "deploy", "run customer_tracer"):
             assert f"bundle {command} --target {target}" in text, (command, target)
 
 

@@ -11,7 +11,7 @@ permissions:
 
 # A new push cancels the previous run for the same PR, saving minutes.
 concurrency:
-  group: pr-${{ github.event.pull_request.number }}
+  group: pr-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' }}
   cancel-in-progress: true
 
 jobs:
@@ -120,3 +120,27 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       - run: uv run actionlint
       - run: uv run zizmor .github/workflows
+
+  # Slim CI: build only the models this PR changed, plus everything downstream, into staging's
+  # ci_pr_<n>_* schemas. Unchanged parents are read from staging instead of being rebuilt.
+  dbt_ci:
+    if: github.repository == github.event.pull_request.head.repo.full_name && github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      DBT_PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      - uses: databricks/setup-cli@e1dad86b08f6ea07707aea128ec4bfa76af8db55 # v1.28.0
+      - name: Fetch staging's manifest
+        run: |
+          mkdir -p state 
+          databricks fs cp dbfs:/Volumes/staging/ops/artifacts/manifest.json state/manifest.json || echo "No manifest yet"
+      - name: Build the changed models
+        run: uv run python -m analytics_platform.cicd build state
