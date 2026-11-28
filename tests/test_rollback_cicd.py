@@ -117,3 +117,9 @@ def test_dev_points_gold_schema_at_its_own_gold():
     bundle = yaml.safe_load((ROOT / "databricks.yml").read_text())
     assert bundle["variables"]["gold_schema"]["default"] == "gold"
     assert bundle["targets"]["dev"]["variables"]["gold_schema"] == "dbt_${workspace.current_user.short_name}_gold"
+
+
+def test_wheel_is_packaged():
+    for job in ["customer_tracer", "restore_gold"]:
+        envs = {env["environment_key"]: env["spec"] for env in bundle_job(job)["environments"]}
+        assert "../dist/*.whl" in envs["python_env"]["dependencies"], job
