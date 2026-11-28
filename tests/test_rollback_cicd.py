@@ -117,6 +117,3 @@ def test_dev_points_gold_schema_at_its_own_gold():
     bundle = yaml.safe_load((ROOT / "databricks.yml").read_text())
     assert bundle["variables"]["gold_schema"]["default"] == "gold"
     assert bundle["targets"]["dev"]["variables"]["gold_schema"] == "dbt_${workspace.current_user.short_name}_gold"
-
-
-
