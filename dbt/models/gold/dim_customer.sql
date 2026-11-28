@@ -7,7 +7,7 @@ select
     md5(customer_unique_id) as customer_key,
     customer_unique_id,
     zip_code_prefix,
-    city,
+    upper(city) as city,
     state,
     updated_at
 from {{ ref('stg_customers') }}
