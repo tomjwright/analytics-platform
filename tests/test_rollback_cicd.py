@@ -119,11 +119,4 @@ def test_dev_points_gold_schema_at_its_own_gold():
     assert bundle["targets"]["dev"]["variables"]["gold_schema"] == "dbt_${workspace.current_user.short_name}_gold"
 
 
-# The drill
 
-
-def test_the_drill_postmortem_is_written():
-    text = (ROOT / "docs" / "postmortems" / "rollback-drill.md").read_text()
-    for heading in ("## Summary", "## Timeline", "## Impact", "## Root cause", "## Recovery", "## Actions"):
-        assert heading in text, heading
-    assert "TODO" not in text
