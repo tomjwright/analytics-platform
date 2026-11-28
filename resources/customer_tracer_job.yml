@@ -50,19 +50,25 @@ resources:
               - ${resources.schemas.landing.name}
               - --bronze-schema
               - ${resources.schemas.bronze.name}
-
-        # TODO(ticket 04): the dbt task.
-        # - It must run only after bronze_customers succeeds (depends_on).
-        # - dbt_task needs: project_directory (../dbt), profiles_directory (. : relative to the
-        #   project), warehouse_id (${var.warehouse_id}) and a list of commands.
-        # - One command: dbt build, with --target ${bundle.target}, so staging and prod pick their
-        #   own profile output. In dev, also pass --vars "{dev_user: ${workspace.current_user.short_name}}"
-        #   so your models land in dbt_<you>_silver and dbt_<you>_gold. (Why does prod not need it?)
-        # - environment_key: dbt_env
-        # Docs: https://docs.databricks.com/aws/en/dev-tools/bundles/job-task-types#dbt-task
-        - task_key: dbt
+        - task_key: record_gold_versions
           depends_on:
             - task_key: bronze_customers
+          environment_key: python_env
+          spark_python_task:
+            python_file: ../src/analytics_platform/gold_versions.py
+            parameters:
+              - record
+              - --catalog
+              - ${var.catalog}
+              - --gold-schema
+              - ${var.gold_schema}
+              - --ops-schema
+              - ${resources.schemas.ops.name}
+              - --run-id
+              - "{{job.run_id}}"
+        - task_key: dbt
+          depends_on:
+            - task_key: record_gold_versions
           dbt_task:
             commands:
               - 'dbt build --target ${bundle.target} --vars "{dev_user: ${workspace.current_user.short_name}}"'

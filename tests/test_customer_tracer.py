@@ -35,10 +35,11 @@ def schema_of(manifest_json, model):
     return manifest_json["nodes"][f"model.analytics_platform.{model}"]["schema"]
 
 
-def test_tasks_run_generate_then_bronze_then_dbt():
+def test_tasks_run_generate_then_bronze_then_record_then_dbt():
     tasks = tracer_job()
     assert tasks["bronze_customers"]["depends_on"] == [{"task_key": "generate_customer_drop"}]
-    assert tasks["dbt"]["depends_on"] == [{"task_key": "bronze_customers"}]
+    assert tasks["record_gold_versions"]["depends_on"] == [{"task_key": "bronze_customers"}]
+    assert tasks["dbt"]["depends_on"] == [{"task_key": "record_gold_versions"}]
 
 
 def test_dbt_task_builds_the_project_for_the_deployed_target():

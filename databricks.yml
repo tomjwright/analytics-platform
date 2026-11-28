@@ -16,6 +16,9 @@ variables:
   schema_separator:
     description: Dev only. The bundle drops name_prefix's trailing "_" for schemas, so dev puts it back.
     default: ""
+  gold_schema:
+    description: Where dbt builds Gold. Not a bundle resource (dbt creates it), so dev names it by hand.
+    default: gold
 
 targets:
   dev:
@@ -29,6 +32,7 @@ targets:
     variables:
       catalog: dev
       schema_separator: _
+      gold_schema: dbt_${workspace.current_user.short_name}_gold
 
   staging:
     mode: production

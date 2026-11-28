@@ -4,6 +4,7 @@ Usage (from the repo root):
     python -m analytics_platform.cicd build <state_dir>          # slim CI: dbt build into ci_pr_<n>_*
     python -m analytics_platform.cicd drop-list <pr_number>      # stdin: `databricks schemas list -o json`
     python -m analytics_platform.cicd tag <sha> <yyyy-mm-dd>     # prints prod-<date>-<short sha>
+    python -m analytics_platform.cicd check-tag <tag>            # exit 1 unless it's a prod-* tag (ticket 06)
 """
 
 import json
@@ -12,6 +13,8 @@ import subprocess
 import sys
 from datetime import date
 from pathlib import Path
+
+from analytics_platform.rollback import is_prod_tag
 
 DBT_DIR = Path(__file__).resolve().parents[2] / "dbt"
 
@@ -53,6 +56,11 @@ def main(argv: list[str]) -> int:
         sha, day = rest
         print(prod_tag(date.fromisoformat(day), sha))
         return 0
+    if command == "check-tag":
+        if is_prod_tag(rest[0]):
+            return 0
+        print(f"not a prod tag: {rest[0]!r}", file=sys.stderr)
+        return 1
     print(f"unknown command: {command}", file=sys.stderr)
     return 2
 
