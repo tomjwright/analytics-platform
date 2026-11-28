@@ -80,6 +80,8 @@ resources:
         - environment_key: python_env
           spec:
             environment_version: "6"
+            dependencies:
+              - ../dist/*.whl
         - environment_key: dbt_env
           spec:
             environment_version: "6"

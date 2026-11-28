@@ -7,6 +7,12 @@ bundle:
 include:
   - resources/*.yml
 
+artifacts:
+  analytics_platform:
+    type: whl
+    build: uv build --wheel
+    path: .
+
 variables:
   catalog:
     description: The Unity Catalog catalog this target writes to (ADR 0001).
