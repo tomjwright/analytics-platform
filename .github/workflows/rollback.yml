@@ -38,13 +38,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # TODO(ticket 06): the rest of the steps, in this order.
-      # 1. setup-uv (pinned, copy from deploy.yml), then check the tag:
-      #    uv run python -m analytics_platform.cicd check-tag "$TAG"
-      #    Why check before checking out? What could `tag: main` or `tag: some-unreviewed-branch` deploy?
-      # 2. A second actions/checkout with `ref: ${{ inputs.tag }}` and persist-credentials: false.
-      #    `with:` is safe for ${{ }}; `run:` is not (script injection). That's why TAG is in env: above.
-      # 3. setup-cli (pinned), then bundle validate and bundle deploy, both --target prod.
-      # 4. "Restore Gold": only `if: inputs.restore_run_id != ''`. Run
-      #    databricks bundle run restore_gold --target prod --params "run_id=$RESTORE_RUN_ID"
-      - run: echo "TODO(ticket 06)" && exit 1
+      
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      
+      - name: Check the tag
+        run: uv run python -m analytics_platform.cicd check-tag "$TAG"
+      
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag }}
+      
+      - uses: databricks/setup-cli@e1dad86b08f6ea07707aea128ec4bfa76af8db55 # v1.28.0
+      
+      - name: Validate prod bundle
+        run: databricks bundle validate --target prod
+      
+      - name: Deploy prod bundle
+        run: databricks bundle deploy --target prod
+      
+      - name: Restore Gold
+        if: inputs.restore_run_id != ''
+        run: databricks bundle run restore_gold --target prod --params "run_id=$RESTORE_RUN_ID"
+
